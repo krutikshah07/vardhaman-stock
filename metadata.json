@@ -1,0 +1,6 @@
+{
+  "name": "Vardhaman Sales Corp Stock Management",
+  "description": "Professional inventory management suite for Vardhaman Sales Corporation featuring real-time stock tracking, batch imports, and audit logs.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,48 @@
+{
+  "entities": {
+    "InventoryItem": {
+      "title": "Inventory Item",
+      "description": "An item in the stock management system",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "The name of the item" },
+        "price": { "type": "number", "description": "The price of the item" },
+        "quantity": { "type": "number", "description": "Total stock quantity" },
+        "upperOfficeQty": { "type": "number", "description": "Quantity in Upper Office" },
+        "downOfficeQty": { "type": "number", "description": "Quantity in Down Office" },
+        "nagdeviOfficeQty": { "type": "number", "description": "Quantity in Nagdevi Office" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Last update timestamp" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp" },
+        "ownerId": { "type": "string", "description": "The UID of the user who owns this item" },
+        "boxPacking": { "type": "string", "description": "Box packing or size specification of the item" }
+      },
+      "required": ["name", "price", "quantity", "upperOfficeQty", "downOfficeQty", "nagdeviOfficeQty", "updatedAt", "createdAt", "ownerId"]
+    },
+    "AuditLog": {
+      "title": "Audit Log",
+      "description": "Historical log of changes to inventory",
+      "type": "object",
+      "properties": {
+        "action": { "type": "string", "enum": ["CREATE", "UPDATE", "DELETE", "STOCK_ADJUST", "BATCH_IMPORT", "BATCH_DELETE"], "description": "Type of action performed" },
+        "itemName": { "type": "string", "description": "Name of the item involved" },
+        "itemId": { "type": "string", "description": "ID of the item involved (optional for batch)" },
+        "changes": { "type": "object", "description": "Details of what changed" },
+        "timestamp": { "type": "string", "format": "date-time", "description": "When the action occurred" },
+        "performedBy": { "type": "string", "description": "Display name of the user" },
+        "performedByEmail": { "type": "string", "description": "Email of the user" },
+        "ownerId": { "type": "string", "description": "The UID of the user who performed the action" }
+      },
+      "required": ["action", "itemName", "timestamp", "performedBy", "performedByEmail", "ownerId"]
+    }
+  },
+  "firestore": {
+    "inventory": {
+      "schema": { "$ref": "#/entities/InventoryItem" },
+      "description": "Collection of stock items"
+    },
+    "audit_logs": {
+      "schema": { "$ref": "#/entities/AuditLog" },
+      "description": "Collection of activity logs"
+    }
+  }
+}

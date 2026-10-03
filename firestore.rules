@@ -1,0 +1,50 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidInventoryItem(data, isUpdate) {
+      return data.name is string && data.name.size() > 0 && data.name.size() <= 200 &&
+             data.price is number && data.price >= 0 &&
+             data.quantity is number && data.quantity >= 0 &&
+             data.upperOfficeQty is number && data.upperOfficeQty >= 0 &&
+             data.downOfficeQty is number && data.downOfficeQty >= 0 &&
+             data.nagdeviOfficeQty is number && data.nagdeviOfficeQty >= 0 &&
+             data.updatedAt == request.time &&
+             (isUpdate ? data.createdAt == resource.data.createdAt : data.createdAt == request.time);
+    }
+
+    match /inventory/{itemId} {
+      allow create: if isSignedIn() && isValidInventoryItem(request.resource.data, false);
+      allow get, list: if isSignedIn();
+      allow update: if isSignedIn() && isValidInventoryItem(request.resource.data, true);
+      allow delete: if isSignedIn();
+    }
+
+    function isValidAuditLog(data) {
+      return data.action is string && 
+             data.itemName is string && data.itemName.size() <= 200 &&
+             data.timestamp == request.time &&
+             data.performedBy is string &&
+             data.performedByEmail is string;
+    }
+
+    match /audit_logs/{logId} {
+      allow create: if isSignedIn() && isValidAuditLog(request.resource.data);
+      allow list: if isSignedIn();
+      // No updates or deletes allowed for audit logs to maintain integrity
+      allow update, delete: if false;
+    }
+  }
+}
