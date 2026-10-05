@@ -515,6 +515,44 @@ export const inventoryService = {
     }
   },
 
+  subscribeToPurchases: (callback: (purchases: PurchaseRecord[]) => void) => {
+    if (!auth.currentUser) return () => {};
+
+    const purchasesCacheKey = getUserCacheKey(PURCHASES_CACHE_KEY, auth.currentUser.uid);
+    const cachedPurchases = readLocalCache<PurchaseRecord>(purchasesCacheKey);
+    if (cachedPurchases.length > 0) {
+      callback(cachedPurchases);
+    }
+
+    const q = query(
+      collection(db, PURCHASES_COLLECTION),
+      orderBy('purchasedAt', 'desc')
+    );
+
+    const key = `purchases:${auth.currentUser.uid}`;
+    return ensureSingleListener(key, () => onSnapshot(q, (snapshot) => {
+      const purchases = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })) as PurchaseRecord[];
+      writeLocalCache(purchasesCacheKey, purchases);
+      callback(purchases);
+    }, (error) => {
+      if (isQuotaExceededError(error)) {
+        console.warn('Purchases listener quota exceeded, using local cache only:', error);
+        callback(readLocalCache<PurchaseRecord>(purchasesCacheKey));
+        const current = listenerRegistry.get(key);
+        if (current) {
+          current();
+          listenerRegistry.delete(key);
+        }
+        return;
+      }
+      console.warn('Purchases listener error, using local cache:', error);
+      callback(readLocalCache<PurchaseRecord>(purchasesCacheKey));
+    }), () => readLocalCache<PurchaseRecord>(purchasesCacheKey));
+  },
+
   recordPurchase: async (item: InventoryItem, purchase: {
     supplierName: string;
     boxPacking?: string;

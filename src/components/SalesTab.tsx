@@ -25,19 +25,12 @@ export const SalesTab: React.FC = () => {
   const [sales, setSales] = useState<SaleRecord[]>([]);
 
   useEffect(() => {
-    let active = true;
-
-    const loadSales = async () => {
-      const nextSales = await inventoryService.fetchSalesOnce();
-      if (active) {
-        setSales(nextSales);
-      }
-    };
-
-    loadSales();
+    const unsubscribe = inventoryService.subscribeToSales((nextSales) => {
+      setSales(nextSales);
+    });
 
     return () => {
-      active = false;
+      unsubscribe();
     };
   }, []);
 

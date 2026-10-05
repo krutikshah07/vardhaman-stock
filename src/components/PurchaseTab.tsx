@@ -25,19 +25,12 @@ export const PurchaseTab: React.FC = () => {
   const [purchases, setPurchases] = useState<PurchaseRecord[]>([]);
 
   useEffect(() => {
-    let active = true;
-
-    const loadPurchases = async () => {
-      const nextPurchases = await inventoryService.fetchPurchasesOnce();
-      if (active) {
-        setPurchases(nextPurchases);
-      }
-    };
-
-    loadPurchases();
+    const unsubscribe = inventoryService.subscribeToPurchases((nextPurchases) => {
+      setPurchases(nextPurchases);
+    });
 
     return () => {
-      active = false;
+      unsubscribe();
     };
   }, []);
 
