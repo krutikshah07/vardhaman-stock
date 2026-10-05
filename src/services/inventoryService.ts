@@ -56,6 +56,9 @@ const INVENTORY_CACHE_KEY = 'stockwise_inventory_cache';
 const SALES_CACHE_KEY = 'stockwise_sales_cache';
 const PURCHASES_CACHE_KEY = 'stockwise_purchase_cache';
 const AUDIT_CACHE_KEY = 'stockwise_audit_cache';
+const projectCacheSuffix = (firebaseConfig.projectId || 'default-project').replace(/[^a-zA-Z0-9_-]/g, '_');
+
+const getUserCacheKey = (baseKey: string, userId?: string) => `${baseKey}:${projectCacheSuffix}:${userId ?? 'anonymous'}`;
 
 const readLocalCache = <T>(key: string): T[] => {
   try {
@@ -129,7 +132,8 @@ export const inventoryService = {
   subscribeToInventory: (callback: (items: InventoryItem[]) => void) => {
     if (!auth.currentUser) return () => {};
 
-    const cachedItems = readLocalCache<InventoryItem>(INVENTORY_CACHE_KEY);
+    const inventoryCacheKey = getUserCacheKey(INVENTORY_CACHE_KEY, auth.currentUser.uid);
+    const cachedItems = readLocalCache<InventoryItem>(inventoryCacheKey);
     if (cachedItems.length > 0) {
       callback(cachedItems);
     }
@@ -161,12 +165,12 @@ export const inventoryService = {
         return a.id.localeCompare(b.id);
       });
 
-      writeLocalCache(INVENTORY_CACHE_KEY, items);
+      writeLocalCache(inventoryCacheKey, items);
       callback(items);
     }, (error) => {
       if (isQuotaExceededError(error)) {
         console.warn('Inventory listener quota exceeded, using local cache only:', error);
-        callback(readLocalCache<InventoryItem>(INVENTORY_CACHE_KEY));
+        callback(readLocalCache<InventoryItem>(inventoryCacheKey));
         const current = listenerRegistry.get(key);
         if (current) {
           current();
@@ -175,8 +179,8 @@ export const inventoryService = {
         return;
       }
       console.warn('Inventory listener error, using local cache:', error);
-      callback(readLocalCache<InventoryItem>(INVENTORY_CACHE_KEY));
-    }), () => readLocalCache<InventoryItem>(INVENTORY_CACHE_KEY));
+      callback(readLocalCache<InventoryItem>(inventoryCacheKey));
+    }), () => readLocalCache<InventoryItem>(inventoryCacheKey));
   },
 
   updateAllStockDatesTo27July2026: async () => {
@@ -304,8 +308,10 @@ export const inventoryService = {
   },
 
   fetchSalesOnce: async (): Promise<SaleRecord[]> => {
-    const cachedSales = readLocalCache<SaleRecord>(SALES_CACHE_KEY);
-    if (!auth.currentUser) return cachedSales;
+    if (!auth.currentUser) return [];
+
+    const salesCacheKey = getUserCacheKey(SALES_CACHE_KEY, auth.currentUser.uid);
+    const cachedSales = readLocalCache<SaleRecord>(salesCacheKey);
 
     try {
       const q = query(
@@ -318,7 +324,7 @@ export const inventoryService = {
         id: doc.id,
         ...doc.data()
       })) as SaleRecord[];
-      writeLocalCache(SALES_CACHE_KEY, sales);
+      writeLocalCache(salesCacheKey, sales);
       return sales;
     } catch (error) {
       if (isQuotaExceededError(error)) {
@@ -333,7 +339,8 @@ export const inventoryService = {
   subscribeToSales: (callback: (sales: SaleRecord[]) => void) => {
     if (!auth.currentUser) return () => {};
 
-    const cachedSales = readLocalCache<SaleRecord>(SALES_CACHE_KEY);
+    const salesCacheKey = getUserCacheKey(SALES_CACHE_KEY, auth.currentUser.uid);
+    const cachedSales = readLocalCache<SaleRecord>(salesCacheKey);
     if (cachedSales.length > 0) {
       callback(cachedSales);
     }
@@ -350,12 +357,12 @@ export const inventoryService = {
         id: doc.id,
         ...doc.data()
       })) as SaleRecord[];
-      writeLocalCache(SALES_CACHE_KEY, sales);
+      writeLocalCache(salesCacheKey, sales);
       callback(sales);
     }, (error) => {
       if (isQuotaExceededError(error)) {
         console.warn('Sales listener quota exceeded, using local cache only:', error);
-        callback(readLocalCache<SaleRecord>(SALES_CACHE_KEY));
+        callback(readLocalCache<SaleRecord>(salesCacheKey));
         const current = listenerRegistry.get(key);
         if (current) {
           current();
@@ -364,8 +371,8 @@ export const inventoryService = {
         return;
       }
       console.warn('Sales listener error, using local cache:', error);
-      callback(readLocalCache<SaleRecord>(SALES_CACHE_KEY));
-    }), () => readLocalCache<SaleRecord>(SALES_CACHE_KEY));
+      callback(readLocalCache<SaleRecord>(salesCacheKey));
+    }), () => readLocalCache<SaleRecord>(salesCacheKey));
   },
 
   recordSale: async (item: InventoryItem, sale: {
@@ -379,6 +386,8 @@ export const inventoryService = {
   }) => {
     if (!auth.currentUser) throw new Error('User not authenticated');
 
+    const salesCacheKey = getUserCacheKey(SALES_CACHE_KEY, auth.currentUser.uid);
+    const inventoryCacheKey = getUserCacheKey(INVENTORY_CACHE_KEY, auth.currentUser.uid);
     const quantity = Number(sale.quantity) || 0;
     if (quantity <= 0) {
       throw new Error('Sale quantity must be greater than zero.');
@@ -437,11 +446,11 @@ export const inventoryService = {
 
       salePayload.id = saleRef.id;
 
-      const cachedSales = readLocalCache<SaleRecord>(SALES_CACHE_KEY);
+      const cachedSales = readLocalCache<SaleRecord>(salesCacheKey);
       const existingIndex = cachedSales.findIndex(existing => existing.itemId === item.id && existing.customerName === sale.customerName && existing.companyName === sale.companyName && existing.quantity === sale.quantity && existing.soldAt?.seconds === sale.soldAt.getTime() / 1000);
       if (existingIndex === -1) {
         cachedSales.unshift({ ...salePayload, id: saleRef.id });
-        writeLocalCache(SALES_CACHE_KEY, cachedSales);
+        writeLocalCache(salesCacheKey, cachedSales);
       }
 
       logActivity('SALE', item.name, item.id, {
@@ -460,7 +469,7 @@ export const inventoryService = {
         }
       });
     } catch (error) {
-      const cachedSales = readLocalCache<SaleRecord>(SALES_CACHE_KEY);
+      const cachedSales = readLocalCache<SaleRecord>(salesCacheKey);
       const localSale: SaleRecord = {
         id: `local-${Date.now()}`,
         itemId: item.id,
@@ -475,9 +484,9 @@ export const inventoryService = {
         notes: sale.notes?.trim() || '',
         ownerId: auth.currentUser.uid,
       };
-      writeLocalCache(SALES_CACHE_KEY, [localSale, ...cachedSales]);
+      writeLocalCache(salesCacheKey, [localSale, ...cachedSales]);
 
-      const cachedItems = readLocalCache<InventoryItem>(INVENTORY_CACHE_KEY);
+      const cachedItems = readLocalCache<InventoryItem>(inventoryCacheKey);
       const itemIndex = cachedItems.findIndex(existing => existing.id === item.id);
       if (itemIndex >= 0) {
         const updatedItem = { ...cachedItems[itemIndex] };
@@ -486,7 +495,7 @@ export const inventoryService = {
         if (sale.location === 'nagdevi') updatedItem.nagdeviOfficeQty = Math.max(0, (updatedItem.nagdeviOfficeQty || 0) - sale.quantity);
         updatedItem.quantity = (updatedItem.upperOfficeQty || 0) + (updatedItem.downOfficeQty || 0) + (updatedItem.nagdeviOfficeQty || 0);
         cachedItems[itemIndex] = updatedItem;
-        writeLocalCache(INVENTORY_CACHE_KEY, cachedItems);
+        writeLocalCache(inventoryCacheKey, cachedItems);
       }
 
       console.warn('Firestore sale write failed, saved to local cache instead:', error);
@@ -494,8 +503,10 @@ export const inventoryService = {
   },
 
   fetchPurchasesOnce: async (): Promise<PurchaseRecord[]> => {
-    const cachedPurchases = readLocalCache<PurchaseRecord>(PURCHASES_CACHE_KEY);
-    if (!auth.currentUser) return cachedPurchases;
+    if (!auth.currentUser) return [];
+
+    const purchasesCacheKey = getUserCacheKey(PURCHASES_CACHE_KEY, auth.currentUser.uid);
+    const cachedPurchases = readLocalCache<PurchaseRecord>(purchasesCacheKey);
 
     try {
       const q = query(
@@ -508,7 +519,7 @@ export const inventoryService = {
         id: doc.id,
         ...doc.data()
       })) as PurchaseRecord[];
-      writeLocalCache(PURCHASES_CACHE_KEY, purchases);
+      writeLocalCache(purchasesCacheKey, purchases);
       return purchases;
     } catch (error) {
       if (isQuotaExceededError(error)) {
@@ -531,6 +542,8 @@ export const inventoryService = {
   }) => {
     if (!auth.currentUser) throw new Error('User not authenticated');
 
+    const purchasesCacheKey = getUserCacheKey(PURCHASES_CACHE_KEY, auth.currentUser.uid);
+    const inventoryCacheKey = getUserCacheKey(INVENTORY_CACHE_KEY, auth.currentUser.uid);
     const quantity = Number(purchase.quantity) || 0;
     if (quantity <= 0) {
       throw new Error('Purchase quantity must be greater than zero.');
@@ -579,9 +592,9 @@ export const inventoryService = {
       });
 
       purchasePayload.id = purchaseRef.id;
-      const cachedPurchases = readLocalCache<PurchaseRecord>(PURCHASES_CACHE_KEY);
+      const cachedPurchases = readLocalCache<PurchaseRecord>(purchasesCacheKey);
       cachedPurchases.unshift({ ...purchasePayload, id: purchaseRef.id });
-      writeLocalCache(PURCHASES_CACHE_KEY, cachedPurchases);
+      writeLocalCache(purchasesCacheKey, cachedPurchases);
 
       logActivity('PURCHASE', item.name, item.id, {
         before: {
@@ -599,7 +612,7 @@ export const inventoryService = {
         }
       });
     } catch (error) {
-      const cachedPurchases = readLocalCache<PurchaseRecord>(PURCHASES_CACHE_KEY);
+      const cachedPurchases = readLocalCache<PurchaseRecord>(purchasesCacheKey);
       const localPurchase: PurchaseRecord = {
         id: `local-${Date.now()}`,
         itemId: item.id,
@@ -614,9 +627,9 @@ export const inventoryService = {
         notes: purchase.notes?.trim() || '',
         ownerId: auth.currentUser.uid,
       };
-      writeLocalCache(PURCHASES_CACHE_KEY, [localPurchase, ...cachedPurchases]);
+      writeLocalCache(purchasesCacheKey, [localPurchase, ...cachedPurchases]);
 
-      const cachedItems = readLocalCache<InventoryItem>(INVENTORY_CACHE_KEY);
+      const cachedItems = readLocalCache<InventoryItem>(inventoryCacheKey);
       const itemIndex = cachedItems.findIndex(existing => existing.id === item.id);
       if (itemIndex >= 0) {
         const updatedItem = { ...cachedItems[itemIndex] };
@@ -625,7 +638,7 @@ export const inventoryService = {
         if (purchase.location === 'nagdevi') updatedItem.nagdeviOfficeQty = (updatedItem.nagdeviOfficeQty || 0) + quantity;
         updatedItem.quantity = (updatedItem.upperOfficeQty || 0) + (updatedItem.downOfficeQty || 0) + (updatedItem.nagdeviOfficeQty || 0);
         cachedItems[itemIndex] = updatedItem;
-        writeLocalCache(INVENTORY_CACHE_KEY, cachedItems);
+        writeLocalCache(inventoryCacheKey, cachedItems);
       }
 
       console.warn('Firestore purchase write failed, saved to local cache instead:', error);
@@ -633,8 +646,10 @@ export const inventoryService = {
   },
 
   fetchAuditLogsOnce: async (startDate?: Date, endDate?: Date): Promise<AuditLog[]> => {
-    const cachedLogs = readLocalCache<AuditLog>(AUDIT_CACHE_KEY);
-    if (!auth.currentUser) return cachedLogs;
+    if (!auth.currentUser) return [];
+
+    const auditCacheKey = getUserCacheKey(AUDIT_CACHE_KEY, auth.currentUser.uid);
+    const cachedLogs = readLocalCache<AuditLog>(auditCacheKey);
 
     try {
       let q = query(
@@ -657,7 +672,7 @@ export const inventoryService = {
         id: doc.id,
         ...doc.data()
       })) as AuditLog[];
-      writeLocalCache(AUDIT_CACHE_KEY, logs);
+      writeLocalCache(auditCacheKey, logs);
       return logs;
     } catch (error) {
       if (isQuotaExceededError(error)) {
@@ -671,6 +686,8 @@ export const inventoryService = {
 
   subscribeToAuditLogs: (callback: (logs: AuditLog[]) => void, startDate?: Date, endDate?: Date) => {
     if (!auth.currentUser) return () => {};
+
+    const auditCacheKey = getUserCacheKey(AUDIT_CACHE_KEY, auth.currentUser.uid);
 
     let q = query(
       collection(db, AUDIT_COLLECTION),
@@ -687,7 +704,7 @@ export const inventoryService = {
       q = query(q, where('timestamp', '<=', endDate));
     }
 
-    const cachedLogs = readLocalCache<AuditLog>(AUDIT_CACHE_KEY);
+    const cachedLogs = readLocalCache<AuditLog>(auditCacheKey);
     if (cachedLogs.length > 0) {
       callback(cachedLogs);
     }
@@ -698,12 +715,12 @@ export const inventoryService = {
         id: doc.id,
         ...doc.data()
       })) as AuditLog[];
-      writeLocalCache(AUDIT_CACHE_KEY, logs);
+      writeLocalCache(auditCacheKey, logs);
       callback(logs);
     }, (error) => {
       if (isQuotaExceededError(error)) {
         console.warn('Audit log listener quota exceeded, using local cache only:', error);
-        callback(readLocalCache<AuditLog>(AUDIT_CACHE_KEY));
+        callback(readLocalCache<AuditLog>(auditCacheKey));
         const current = listenerRegistry.get(key);
         if (current) {
           current();
@@ -712,8 +729,8 @@ export const inventoryService = {
         return;
       }
       console.warn('Audit log listener error, using local cache:', error);
-      callback(readLocalCache<AuditLog>(AUDIT_CACHE_KEY));
-    }), () => readLocalCache<AuditLog>(AUDIT_CACHE_KEY));
+      callback(readLocalCache<AuditLog>(auditCacheKey));
+    }), () => readLocalCache<AuditLog>(auditCacheKey));
   },
 
   addItem: async (
@@ -778,7 +795,8 @@ export const inventoryService = {
 
       const docRef = await addDoc(collection(db, COLLECTION_PATH), payload);
 
-      const cachedItems = readLocalCache<InventoryItem>(INVENTORY_CACHE_KEY);
+      const inventoryCacheKey = getUserCacheKey(INVENTORY_CACHE_KEY, auth.currentUser.uid);
+      const cachedItems = readLocalCache<InventoryItem>(inventoryCacheKey);
       const newItem: InventoryItem = {
         ...item,
         id: docRef.id,
@@ -791,11 +809,12 @@ export const inventoryService = {
         updatedAt: { seconds: Math.floor(Date.now() / 1000), nanoseconds: 0 },
         createdAt: { seconds: Math.floor(Date.now() / 1000), nanoseconds: 0 },
       } as InventoryItem;
-      writeLocalCache(INVENTORY_CACHE_KEY, [newItem, ...cachedItems]);
+      writeLocalCache(inventoryCacheKey, [newItem, ...cachedItems]);
 
       logActivity('CREATE', item.name, docRef.id, { after: item });
     } catch (error) {
-      const cachedItems = readLocalCache<InventoryItem>(INVENTORY_CACHE_KEY);
+      const inventoryCacheKey = getUserCacheKey(INVENTORY_CACHE_KEY, auth.currentUser.uid);
+      const cachedItems = readLocalCache<InventoryItem>(inventoryCacheKey);
       const fallbackItem: InventoryItem = {
         ...item,
         id: `local-${Date.now()}`,
@@ -808,13 +827,15 @@ export const inventoryService = {
         createdAt: { seconds: Math.floor(Date.now() / 1000), nanoseconds: 0 },
         updatedAt: { seconds: Math.floor(Date.now() / 1000), nanoseconds: 0 },
       } as InventoryItem;
-      writeLocalCache(INVENTORY_CACHE_KEY, [fallbackItem, ...cachedItems]);
+      writeLocalCache(inventoryCacheKey, [fallbackItem, ...cachedItems]);
       console.warn('Firestore create failed, saved to local cache instead:', error);
     }
   },
 
   updateItem: async (item: InventoryItem, updates: { name: string, price: number, boxPacking?: string }) => {
     if (!auth.currentUser) throw new Error('User not authenticated');
+
+    const inventoryCacheKey = getUserCacheKey(INVENTORY_CACHE_KEY, auth.currentUser.uid);
     
     try {
       const docRef = doc(db, COLLECTION_PATH, item.id);
@@ -834,7 +855,7 @@ export const inventoryService = {
 
       await updateDoc(docRef, cleanedUpdates);
 
-      const cachedItems = readLocalCache<InventoryItem>(INVENTORY_CACHE_KEY);
+      const cachedItems = readLocalCache<InventoryItem>(inventoryCacheKey);
       const itemIndex = cachedItems.findIndex(existing => existing.id === item.id);
       if (itemIndex >= 0) {
         cachedItems[itemIndex] = {
@@ -845,7 +866,7 @@ export const inventoryService = {
           boxPacking: updates.boxPacking ?? item.boxPacking ?? '',
           updatedAt: { seconds: Math.floor(Date.now() / 1000), nanoseconds: 0 },
         };
-        writeLocalCache(INVENTORY_CACHE_KEY, cachedItems);
+        writeLocalCache(inventoryCacheKey, cachedItems);
       }
 
       logActivity('UPDATE', item.name, item.id, {
@@ -853,7 +874,7 @@ export const inventoryService = {
         after: updates
       });
     } catch (error) {
-      const cachedItems = readLocalCache<InventoryItem>(INVENTORY_CACHE_KEY);
+      const cachedItems = readLocalCache<InventoryItem>(inventoryCacheKey);
       const itemIndex = cachedItems.findIndex(existing => existing.id === item.id);
       if (itemIndex >= 0) {
         cachedItems[itemIndex] = {
@@ -864,7 +885,7 @@ export const inventoryService = {
           boxPacking: updates.boxPacking ?? item.boxPacking ?? '',
           updatedAt: { seconds: Math.floor(Date.now() / 1000), nanoseconds: 0 },
         };
-        writeLocalCache(INVENTORY_CACHE_KEY, cachedItems);
+        writeLocalCache(inventoryCacheKey, cachedItems);
       }
       console.warn('Firestore item update failed, saved to local cache instead:', error);
     }
@@ -872,6 +893,8 @@ export const inventoryService = {
 
   updateQuantity: async (item: InventoryItem, quantities: { total: number, upper?: number, down?: number, nagdevi?: number }) => {
     if (!auth.currentUser) throw new Error('User not authenticated');
+
+    const inventoryCacheKey = getUserCacheKey(INVENTORY_CACHE_KEY, auth.currentUser.uid);
 
     try {
       const docRef = doc(db, COLLECTION_PATH, item.id);
@@ -885,11 +908,11 @@ export const inventoryService = {
 
       await updateDoc(docRef, updates);
 
-      const cachedItems = readLocalCache<InventoryItem>(INVENTORY_CACHE_KEY);
+      const cachedItems = readLocalCache<InventoryItem>(inventoryCacheKey);
       const itemIndex = cachedItems.findIndex(existing => existing.id === item.id);
       if (itemIndex >= 0) {
         cachedItems[itemIndex] = { ...cachedItems[itemIndex], ...item, ...(quantities as any), quantity: quantities.total };
-        writeLocalCache(INVENTORY_CACHE_KEY, cachedItems);
+        writeLocalCache(inventoryCacheKey, cachedItems);
       }
 
       logActivity('STOCK_ADJUST', item.name, item.id, {
@@ -902,7 +925,7 @@ export const inventoryService = {
         after: quantities
       });
     } catch (error) {
-      const cachedItems = readLocalCache<InventoryItem>(INVENTORY_CACHE_KEY);
+      const cachedItems = readLocalCache<InventoryItem>(inventoryCacheKey);
       const itemIndex = cachedItems.findIndex(existing => existing.id === item.id);
       const nextItem: InventoryItem = {
         ...item,
@@ -916,13 +939,15 @@ export const inventoryService = {
       } else {
         cachedItems.unshift(nextItem);
       }
-      writeLocalCache(INVENTORY_CACHE_KEY, cachedItems);
+      writeLocalCache(inventoryCacheKey, cachedItems);
       console.warn('Firestore stock update failed, saved to local cache instead:', error);
     }
   },
 
   updateBoxPacking: async (item: InventoryItem, boxPacking: string) => {
     if (!auth.currentUser) throw new Error('User not authenticated');
+
+    const inventoryCacheKey = getUserCacheKey(INVENTORY_CACHE_KEY, auth.currentUser.uid);
     
     try {
       const docRef = doc(db, COLLECTION_PATH, item.id);
@@ -931,11 +956,11 @@ export const inventoryService = {
         updatedAt: serverTimestamp(),
       });
 
-      const cachedItems = readLocalCache<InventoryItem>(INVENTORY_CACHE_KEY);
+      const cachedItems = readLocalCache<InventoryItem>(inventoryCacheKey);
       const itemIndex = cachedItems.findIndex(existing => existing.id === item.id);
       if (itemIndex >= 0) {
         cachedItems[itemIndex] = { ...cachedItems[itemIndex], boxPacking, updatedAt: { seconds: Math.floor(Date.now() / 1000), nanoseconds: 0 } };
-        writeLocalCache(INVENTORY_CACHE_KEY, cachedItems);
+        writeLocalCache(inventoryCacheKey, cachedItems);
       }
 
       logActivity('UPDATE', item.name, item.id, {
@@ -943,11 +968,11 @@ export const inventoryService = {
         after: { boxPacking }
       });
     } catch (error) {
-      const cachedItems = readLocalCache<InventoryItem>(INVENTORY_CACHE_KEY);
+      const cachedItems = readLocalCache<InventoryItem>(inventoryCacheKey);
       const itemIndex = cachedItems.findIndex(existing => existing.id === item.id);
       if (itemIndex >= 0) {
         cachedItems[itemIndex] = { ...cachedItems[itemIndex], boxPacking, updatedAt: { seconds: Math.floor(Date.now() / 1000), nanoseconds: 0 } };
-        writeLocalCache(INVENTORY_CACHE_KEY, cachedItems);
+        writeLocalCache(inventoryCacheKey, cachedItems);
       }
       console.warn('Firestore box packing update failed, saved to local cache instead:', error);
     }
@@ -955,18 +980,20 @@ export const inventoryService = {
 
   deleteItem: async (item: InventoryItem) => {
     if (!auth.currentUser) throw new Error('User not authenticated');
+
+    const inventoryCacheKey = getUserCacheKey(INVENTORY_CACHE_KEY, auth.currentUser.uid);
     
     try {
       const docRef = doc(db, COLLECTION_PATH, item.id);
       await deleteDoc(docRef);
 
-      const cachedItems = readLocalCache<InventoryItem>(INVENTORY_CACHE_KEY);
-      writeLocalCache(INVENTORY_CACHE_KEY, cachedItems.filter(existing => existing.id !== item.id));
+      const cachedItems = readLocalCache<InventoryItem>(inventoryCacheKey);
+      writeLocalCache(inventoryCacheKey, cachedItems.filter(existing => existing.id !== item.id));
 
       logActivity('DELETE', item.name, item.id, { before: item });
     } catch (error) {
-      const cachedItems = readLocalCache<InventoryItem>(INVENTORY_CACHE_KEY);
-      writeLocalCache(INVENTORY_CACHE_KEY, cachedItems.filter(existing => existing.id !== item.id));
+      const cachedItems = readLocalCache<InventoryItem>(inventoryCacheKey);
+      writeLocalCache(inventoryCacheKey, cachedItems.filter(existing => existing.id !== item.id));
       console.warn('Firestore delete failed, removed from local cache instead:', error);
     }
   },

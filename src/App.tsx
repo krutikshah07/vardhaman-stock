@@ -37,6 +37,7 @@ export default function App() {
 
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, (currUser) => {
+      setItems([]);
       setUser(currUser);
       setLoading(false);
     });
