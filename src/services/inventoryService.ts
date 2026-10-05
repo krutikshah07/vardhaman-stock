@@ -14,7 +14,7 @@ import {
   writeBatch,
   Timestamp
 } from 'firebase/firestore';
-import { db, auth } from '../lib/firebase';
+import { db, auth, firebaseConfig } from '../lib/firebase';
 import { InventoryItem, NewInventoryItem, AuditLog, AuditAction, SaleRecord, PurchaseRecord, SaleLocation } from '../types';
 
 enum OperationType {
@@ -60,24 +60,12 @@ const projectCacheSuffix = (firebaseConfig.projectId || 'default-project').repla
 
 const getUserCacheKey = (baseKey: string, userId?: string) => `${baseKey}:${projectCacheSuffix}:${userId ?? 'anonymous'}`;
 
-const readLocalCache = <T>(key: string): T[] => {
-  try {
-    const raw = localStorage.getItem(key);
-    if (!raw) return [] as T[];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch (error) {
-    console.warn(`Failed to read local cache for ${key}:`, error);
-    return [] as T[];
-  }
+const readLocalCache = <T>(_key: string): T[] => {
+  return [] as T[];
 };
 
-const writeLocalCache = <T>(key: string, value: T[]) => {
-  try {
-    localStorage.setItem(key, JSON.stringify(value));
-  } catch (error) {
-    console.warn(`Failed to write local cache for ${key}:`, error);
-  }
+const writeLocalCache = <T>(_key: string, _value: T[]) => {
+  // Temporary: disable local fallback cache to prevent stale data switching between datasets.
 };
 
 const isQuotaExceededError = (error: unknown): boolean => {
@@ -139,8 +127,7 @@ export const inventoryService = {
     }
 
     const q = query(
-      collection(db, COLLECTION_PATH),
-      where('ownerId', '==', auth.currentUser.uid)
+      collection(db, COLLECTION_PATH)
     );
 
     const key = `inventory:${auth.currentUser.uid}`;
@@ -316,7 +303,6 @@ export const inventoryService = {
     try {
       const q = query(
         collection(db, SALES_COLLECTION),
-        where('ownerId', '==', auth.currentUser.uid),
         orderBy('soldAt', 'desc')
       );
       const snapshot = await getDocs(q);
@@ -347,7 +333,6 @@ export const inventoryService = {
 
     const q = query(
       collection(db, SALES_COLLECTION),
-      where('ownerId', '==', auth.currentUser.uid),
       orderBy('soldAt', 'desc')
     );
 
@@ -511,7 +496,6 @@ export const inventoryService = {
     try {
       const q = query(
         collection(db, PURCHASES_COLLECTION),
-        where('ownerId', '==', auth.currentUser.uid),
         orderBy('purchasedAt', 'desc')
       );
       const snapshot = await getDocs(q);
@@ -654,7 +638,6 @@ export const inventoryService = {
     try {
       let q = query(
         collection(db, AUDIT_COLLECTION),
-        where('ownerId', '==', auth.currentUser.uid),
         orderBy('timestamp', 'desc'),
         limit(200)
       );
@@ -691,7 +674,6 @@ export const inventoryService = {
 
     let q = query(
       collection(db, AUDIT_COLLECTION),
-      where('ownerId', '==', auth.currentUser.uid),
       orderBy('timestamp', 'desc'),
       limit(200)
     );
