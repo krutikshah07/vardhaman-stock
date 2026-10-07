@@ -1,17 +1,8 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Default deny
-    match /{document=**} {
-      allow read, write: if false;
-    }
-
     function isSignedIn() {
-      return request.auth != null && request.auth.token.email_verified == true;
-    }
-
-    function isOwner(userId) {
-      return isSignedIn() && request.auth.uid == userId;
+      return request.auth != null;
     }
 
     function isValidInventoryItem(data, isUpdate) {
@@ -32,8 +23,45 @@ service cloud.firestore {
       allow delete: if isSignedIn();
     }
 
+    function isValidSaleRecord(data) {
+      return data.itemId is string &&
+             data.itemName is string &&
+             data.customerName is string &&
+             data.companyName is string &&
+             data.quantity is number && data.quantity > 0 &&
+             data.unitPrice is number && data.unitPrice >= 0 &&
+             data.totalAmount is number && data.totalAmount >= 0 &&
+             data.location is string &&
+             data.soldAt is timestamp &&
+             data.notes is string;
+    }
+
+    match /sales/{saleId} {
+      allow create: if isSignedIn() && isValidSaleRecord(request.resource.data);
+      allow get, list: if isSignedIn();
+      allow update, delete: if isSignedIn();
+    }
+
+    function isValidPurchaseRecord(data) {
+      return data.itemId is string &&
+             data.itemName is string &&
+             data.supplierName is string &&
+             data.quantity is number && data.quantity > 0 &&
+             data.unitPrice is number && data.unitPrice >= 0 &&
+             data.totalAmount is number && data.totalAmount >= 0 &&
+             data.location is string &&
+             data.purchasedAt is timestamp &&
+             data.notes is string;
+    }
+
+    match /purchases/{purchaseId} {
+      allow create: if isSignedIn() && isValidPurchaseRecord(request.resource.data);
+      allow get, list: if isSignedIn();
+      allow update, delete: if isSignedIn();
+    }
+
     function isValidAuditLog(data) {
-      return data.action is string && 
+      return data.action is string &&
              data.itemName is string && data.itemName.size() <= 200 &&
              data.timestamp == request.time &&
              data.performedBy is string &&
@@ -43,7 +71,6 @@ service cloud.firestore {
     match /audit_logs/{logId} {
       allow create: if isSignedIn() && isValidAuditLog(request.resource.data);
       allow list: if isSignedIn();
-      // No updates or deletes allowed for audit logs to maintain integrity
       allow update, delete: if false;
     }
   }

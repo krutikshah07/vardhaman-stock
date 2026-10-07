@@ -1,5 +1,5 @@
-import React, { useCallback, useMemo } from 'react';
-import { Search, Plus, Minus, Trash2, TrendingDown, TrendingUp, PackageSearch, Pencil, Loader2, Calendar } from 'lucide-react';
+import React, { useCallback, useMemo, useState, useEffect, useRef } from 'react';
+import { Search, Plus, Minus, Trash2, TrendingDown, TrendingUp, PackageSearch, Pencil, Loader2, Calendar, ChevronLeft, ChevronRight } from 'lucide-react';
 import { InventoryItem, SaleLocation } from '../types';
 import { inventoryService } from '../services/inventoryService';
 import { motion, AnimatePresence } from 'motion/react';
@@ -299,16 +299,13 @@ const InventoryRow = React.memo(({
   isEditing?: boolean;
   isLastUpdated?: boolean;
 }) => (
-  <motion.tr
-    initial={{ opacity: 0 }}
-    animate={{ opacity: 1 }}
-    exit={{ opacity: 0 }}
-    className={`group transition-all duration-500 border-l-4 ${
+  <tr
+    className={`group transition-colors duration-150 border-l-4 ${
       isEditing 
         ? "bg-indigo-50 border-indigo-500 shadow-[inset_0_1px_3px_rgba(99,102,241,0.05)]" 
         : isLastUpdated 
-        ? "bg-emerald-100/85 border-emerald-500 font-bold scale-[1.002] shadow-sm z-10" 
-        : "hover:bg-slate-50/65 border-transparent focus-within:bg-blue-50/70 focus-within:border-blue-400 focus-within:scale-[1.001] focus-within:shadow-sm focus-within:z-10"
+        ? "bg-emerald-100/85 border-emerald-500 font-bold z-10" 
+        : "hover:bg-slate-50/65 border-transparent focus-within:bg-blue-50/70 focus-within:border-blue-400 focus-within:shadow-sm focus-within:z-10"
     }`}
   >
     <td className={`px-6 py-4 whitespace-nowrap sticky left-0 z-20 border-r border-slate-200 transition-colors shadow-[2px_0_5px_rgba(0,0,0,0.02)] ${
@@ -484,7 +481,7 @@ const InventoryRow = React.memo(({
         </button>
       </div>
     </td>
-  </motion.tr>
+  </tr>
 ));
 
 const MobileInventoryCard = React.memo(({ 
@@ -516,15 +513,13 @@ const MobileInventoryCard = React.memo(({
   isEditing?: boolean;
   isLastUpdated?: boolean;
 }) => (
-  <motion.div
-    initial={{ opacity: 0, scale: 0.98 }}
-    animate={{ opacity: 1, scale: 1 }}
-    className={`p-4 rounded-2xl border transition-all duration-500 space-y-4 ${
+  <div
+    className={`p-4 rounded-2xl border transition-colors duration-150 space-y-4 ${
       isEditing 
         ? "bg-indigo-50/50 border-indigo-500 ring-2 ring-indigo-500/25 shadow-md" 
         : isLastUpdated 
-        ? "bg-emerald-100/90 border-emerald-600 ring-4 ring-emerald-500/20 shadow-md scale-[1.01]" 
-        : "bg-white border-slate-200 shadow-sm focus-within:bg-blue-50/70 focus-within:border-blue-400 focus-within:scale-[1.005] focus-within:shadow-md transition-all duration-300"
+        ? "bg-emerald-100/90 border-emerald-600 ring-4 ring-emerald-500/20 shadow-md" 
+        : "bg-white border-slate-200 shadow-sm focus-within:bg-blue-50/70 focus-within:border-blue-400 focus-within:shadow-md"
     }`}
   >
     <div className="flex justify-between items-start gap-2">
@@ -625,7 +620,7 @@ const MobileInventoryCard = React.memo(({
         </button>
       </div>
     </div>
-  </motion.div>
+  </div>
 ));
 
 export const InventoryTable: React.FC<InventoryTableProps> = ({ items, setItems, locationFilter, onFilterChange }) => {
@@ -688,6 +683,9 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({ items, setItems,
     }, 4000);
   }, []);
 
+  const [currentPage, setCurrentPage] = React.useState(1);
+  const [pageSize, setPageSize] = React.useState<number>(50);
+
   const filteredItems = useMemo(() => {
     const normalizeSearchText = (value: string) => value.toLowerCase().replace(/[\s_-]+/g, '');
     const searchQuery = normalizeSearchText(deferredSearchTerm.trim());
@@ -704,6 +702,20 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({ items, setItems,
       return matchesSearch && matchesLocation;
     });
   }, [items, deferredSearchTerm, locationFilter]);
+
+  // Reset page to 1 whenever search query or location filter changes
+  React.useEffect(() => {
+    setCurrentPage(1);
+  }, [deferredSearchTerm, locationFilter]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredItems.length / pageSize));
+  const safePage = Math.min(currentPage, totalPages);
+
+  const paginatedItems = useMemo(() => {
+    if (pageSize >= filteredItems.length) return filteredItems;
+    const startIndex = (safePage - 1) * pageSize;
+    return filteredItems.slice(startIndex, startIndex + pageSize);
+  }, [filteredItems, safePage, pageSize]);
 
   const handleUpdateOfficeQty = useCallback(async (item: InventoryItem, office: 'upper' | 'down' | 'nagdevi', delta: number) => {
     const quantities = {
@@ -1326,7 +1338,7 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({ items, setItems,
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 uppercase">
-                {filteredItems.map((item) => (
+                {paginatedItems.map((item) => (
                   <InventoryRow
                     key={item.id}
                     item={item}
@@ -1359,10 +1371,62 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({ items, setItems,
               </tbody>
             </table>
           </div>
+
+          {/* Pagination Controls */}
+          {filteredItems.length > 0 && (
+            <div className="px-6 py-3.5 bg-slate-50/80 border-t border-slate-200 flex flex-wrap items-center justify-between gap-4 text-xs font-bold text-slate-600">
+              <div className="flex items-center gap-2">
+                <span>
+                  Showing <span className="text-slate-900">{Math.min((safePage - 1) * pageSize + 1, filteredItems.length)}</span> to{' '}
+                  <span className="text-slate-900">{Math.min(safePage * pageSize, filteredItems.length)}</span> of{' '}
+                  <span className="text-slate-900">{filteredItems.length}</span> items
+                </span>
+                <span className="text-slate-300">|</span>
+                <span className="text-slate-400 font-semibold">Rows per page:</span>
+                <select
+                  value={pageSize}
+                  onChange={(e) => {
+                    setPageSize(Number(e.target.value));
+                    setCurrentPage(1);
+                  }}
+                  className="bg-white border border-slate-200 rounded-lg px-2 py-1 text-slate-800 text-xs font-bold focus:outline-none focus:border-blue-500 cursor-pointer shadow-xs"
+                >
+                  <option value={30}>30</option>
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                  <option value={200}>200</option>
+                </select>
+              </div>
+
+              {totalPages > 1 && (
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                    disabled={safePage <= 1}
+                    className="flex items-center gap-1 px-3 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition-all active:scale-95 shadow-xs"
+                  >
+                    <ChevronLeft size={16} />
+                    <span>Prev</span>
+                  </button>
+                  <span className="px-2">
+                    Page <span className="text-blue-600">{safePage}</span> of {totalPages}
+                  </span>
+                  <button
+                    onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                    disabled={safePage >= totalPages}
+                    className="flex items-center gap-1 px-3 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition-all active:scale-95 shadow-xs"
+                  >
+                    <span>Next</span>
+                    <ChevronRight size={16} />
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       ) : (
         <div className="space-y-3">
-          {filteredItems.map((item) => (
+          {paginatedItems.map((item) => (
             <MobileInventoryCard
               key={item.id}
               item={item}
@@ -1384,6 +1448,27 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({ items, setItems,
             <div className="py-20 text-center bg-white rounded-3xl border border-dashed border-slate-200">
                <PackageSearch size={48} className="mx-auto text-slate-300 mb-2" strokeWidth={1} />
                <p className="font-medium text-slate-500 uppercase tracking-wider text-xs">No items found</p>
+            </div>
+          )}
+
+          {/* Mobile Pagination */}
+          {filteredItems.length > 0 && totalPages > 1 && (
+            <div className="flex items-center justify-between p-4 bg-white rounded-2xl border border-slate-200 shadow-sm text-xs font-bold text-slate-700">
+              <button
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                disabled={safePage <= 1}
+                className="px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 disabled:opacity-40"
+              >
+                Prev
+              </button>
+              <span>{safePage} / {totalPages} ({filteredItems.length} items)</span>
+              <button
+                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                disabled={safePage >= totalPages}
+                className="px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 disabled:opacity-40"
+              >
+                Next
+              </button>
             </div>
           )}
         </div>

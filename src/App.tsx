@@ -297,38 +297,37 @@ export default function App() {
                 </button>
               </div>
 
-              {view === 'inventory' ? (
-                <div className="space-y-8">
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
-                    <ManualEntryForm 
-                      onAdd={handleAddSingleItem} 
-                      isProcessing={isProcessing} 
-                    />
-                    <ExcelImport />
-                  </div>
+              {/* Tab Views: Keep all tabs mounted so switching is instant without re-fetching or DOM rebuilding */}
+              <div className={view === 'inventory' ? 'block space-y-8' : 'hidden'}>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+                  <ManualEntryForm 
+                    onAdd={handleAddSingleItem} 
+                    isProcessing={isProcessing} 
+                  />
+                  <ExcelImport />
+                </div>
 
-                  <div className="w-full overflow-hidden">
-                    <InventoryTable 
-                      items={items} 
-                      setItems={setItems}
-                      locationFilter={locationFilter} 
-                      onFilterChange={setLocationFilter} 
-                    />
-                  </div>
+                <div className="w-full overflow-hidden">
+                  <InventoryTable 
+                    items={items} 
+                    setItems={setItems}
+                    locationFilter={locationFilter} 
+                    onFilterChange={setLocationFilter} 
+                  />
                 </div>
-              ) : view === 'sales' ? (
-                <div className="max-w-6xl">
-                  <SalesTab />
-                </div>
-              ) : view === 'purchase' ? (
-                <div className="max-w-6xl">
-                  <PurchaseTab />
-                </div>
-              ) : (
-                <div className="max-w-4xl">
-                  <ActivityFeed />
-                </div>
-              )}
+              </div>
+
+              <div className={view === 'sales' ? 'block max-w-6xl' : 'hidden'}>
+                <SalesTab />
+              </div>
+
+              <div className={view === 'purchase' ? 'block max-w-6xl' : 'hidden'}>
+                <PurchaseTab />
+              </div>
+
+              <div className={view === 'history' ? 'block max-w-4xl' : 'hidden'}>
+                <ActivityFeed />
+              </div>
             </motion.div>
           )}
         </AnimatePresence>

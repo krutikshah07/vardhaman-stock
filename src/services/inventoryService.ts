@@ -307,8 +307,8 @@ export const inventoryService = {
       );
       const snapshot = await getDocs(q);
       const sales = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
+        ...doc.data(),
+        id: doc.id
       })) as SaleRecord[];
       writeLocalCache(salesCacheKey, sales);
       return sales;
@@ -339,8 +339,8 @@ export const inventoryService = {
     const key = `sales:${auth.currentUser.uid}`;
     return ensureSingleListener(key, () => onSnapshot(q, (snapshot) => {
       const sales = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
+        ...doc.data(),
+        id: doc.id
       })) as SaleRecord[];
       writeLocalCache(salesCacheKey, sales);
       callback(sales);
@@ -399,8 +399,7 @@ export const inventoryService = {
     if (sale.location === 'nagdevi') updatedQuantities.nagdevi = Math.max(0, updatedQuantities.nagdevi - quantity);
 
     const totalQuantity = updatedQuantities.upper + updatedQuantities.down + updatedQuantities.nagdevi;
-    const salePayload: SaleRecord = {
-      id: '',
+    const saleData = {
       itemId: item.id,
       itemName: item.name,
       customerName: sale.customerName.trim(),
@@ -416,7 +415,7 @@ export const inventoryService = {
 
     try {
       const saleRef = await addDoc(collection(db, SALES_COLLECTION), {
-        ...salePayload,
+        ...saleData,
         soldAt: sale.soldAt,
         ownerId: auth.currentUser.uid,
       });
@@ -429,7 +428,10 @@ export const inventoryService = {
         updatedAt: serverTimestamp(),
       });
 
-      salePayload.id = saleRef.id;
+      const salePayload: SaleRecord = {
+        ...saleData,
+        id: saleRef.id,
+      };
 
       const cachedSales = readLocalCache<SaleRecord>(salesCacheKey);
       const existingIndex = cachedSales.findIndex(existing => existing.itemId === item.id && existing.customerName === sale.customerName && existing.companyName === sale.companyName && existing.quantity === sale.quantity && existing.soldAt?.seconds === sale.soldAt.getTime() / 1000);
@@ -500,8 +502,8 @@ export const inventoryService = {
       );
       const snapshot = await getDocs(q);
       const purchases = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
+        ...doc.data(),
+        id: doc.id
       })) as PurchaseRecord[];
       writeLocalCache(purchasesCacheKey, purchases);
       return purchases;
@@ -532,8 +534,8 @@ export const inventoryService = {
     const key = `purchases:${auth.currentUser.uid}`;
     return ensureSingleListener(key, () => onSnapshot(q, (snapshot) => {
       const purchases = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
+        ...doc.data(),
+        id: doc.id
       })) as PurchaseRecord[];
       writeLocalCache(purchasesCacheKey, purchases);
       callback(purchases);
@@ -583,8 +585,7 @@ export const inventoryService = {
 
     const totalQuantity = updatedQuantities.upper + updatedQuantities.down + updatedQuantities.nagdevi;
     const targetBoxPacking = purchase.boxPacking?.trim().toUpperCase() || item.boxPacking || '';
-    const purchasePayload: PurchaseRecord = {
-      id: '',
+    const purchaseData = {
       itemId: item.id,
       itemName: item.name,
       supplierName: purchase.supplierName.trim(),
@@ -600,7 +601,7 @@ export const inventoryService = {
 
     try {
       const purchaseRef = await addDoc(collection(db, PURCHASES_COLLECTION), {
-        ...purchasePayload,
+        ...purchaseData,
         purchasedAt: purchase.purchasedAt,
         ownerId: auth.currentUser.uid,
       });
@@ -613,9 +614,12 @@ export const inventoryService = {
         updatedAt: serverTimestamp(),
       });
 
-      purchasePayload.id = purchaseRef.id;
+      const purchaseRecord: PurchaseRecord = {
+        ...purchaseData,
+        id: purchaseRef.id,
+      };
       const cachedPurchases = readLocalCache<PurchaseRecord>(purchasesCacheKey);
-      cachedPurchases.unshift({ ...purchasePayload, id: purchaseRef.id });
+      cachedPurchases.unshift(purchaseRecord);
       writeLocalCache(purchasesCacheKey, cachedPurchases);
 
       logActivity('PURCHASE', item.name, item.id, {
@@ -630,7 +634,7 @@ export const inventoryService = {
           upper: updatedQuantities.upper,
           down: updatedQuantities.down,
           nagdevi: updatedQuantities.nagdevi,
-          purchase: purchasePayload,
+          purchase: purchaseRecord,
         }
       });
     } catch (error) {
@@ -664,6 +668,172 @@ export const inventoryService = {
       }
 
       console.warn('Firestore purchase write failed, saved to local cache instead:', error);
+    }
+  },
+
+  deleteSale: async (saleId: string) => {
+    if (!auth.currentUser) return;
+    if (!saleId || typeof saleId !== 'string' || !saleId.trim()) {
+      throw new Error('Invalid saleId provided for deletion.');
+    }
+    const cleanId = saleId.trim();
+    try {
+      const salesCacheKey = getUserCacheKey(SALES_CACHE_KEY, auth.currentUser.uid);
+      const cachedSales = readLocalCache<SaleRecord>(salesCacheKey);
+      writeLocalCache(salesCacheKey, cachedSales.filter(s => s.id !== cleanId));
+
+      await deleteDoc(doc(db, SALES_COLLECTION, cleanId));
+      logActivity('DELETE', `Sale Record (${cleanId})`, undefined, { after: 'Deleted sale record' });
+    } catch (error) {
+      console.warn('Failed to delete sale record:', error);
+      throw error;
+    }
+  },
+
+  deletePurchase: async (purchaseId: string) => {
+    if (!auth.currentUser) return;
+    if (!purchaseId || typeof purchaseId !== 'string' || !purchaseId.trim()) {
+      throw new Error('Invalid purchaseId provided for deletion.');
+    }
+    const cleanId = purchaseId.trim();
+    try {
+      const purchasesCacheKey = getUserCacheKey(PURCHASES_CACHE_KEY, auth.currentUser.uid);
+      const cachedPurchases = readLocalCache<PurchaseRecord>(purchasesCacheKey);
+      writeLocalCache(purchasesCacheKey, cachedPurchases.filter(p => p.id !== cleanId));
+
+      await deleteDoc(doc(db, PURCHASES_COLLECTION, cleanId));
+      logActivity('DELETE', `Purchase Record (${cleanId})`, undefined, { after: 'Deleted purchase record' });
+    } catch (error) {
+      console.warn('Failed to delete purchase record:', error);
+      throw error;
+    }
+  },
+
+  updateSale: async (saleId: string, updates: {
+    customerName: string;
+    companyName: string;
+    quantity: number;
+    unitPrice: number;
+    location: SaleLocation;
+  }) => {
+    if (!auth.currentUser) return;
+    if (!saleId || typeof saleId !== 'string' || !saleId.trim()) {
+      throw new Error('Invalid saleId provided for update.');
+    }
+    const cleanId = saleId.trim();
+    try {
+      const totalAmount = updates.quantity * updates.unitPrice;
+      const salesCacheKey = getUserCacheKey(SALES_CACHE_KEY, auth.currentUser.uid);
+      const cachedSales = readLocalCache<SaleRecord>(salesCacheKey);
+      writeLocalCache(salesCacheKey, cachedSales.map(s => s.id === cleanId ? {
+        ...s,
+        customerName: updates.customerName.trim(),
+        companyName: updates.companyName.trim(),
+        quantity: updates.quantity,
+        unitPrice: updates.unitPrice,
+        totalAmount,
+        location: updates.location,
+      } : s));
+
+      await updateDoc(doc(db, SALES_COLLECTION, cleanId), {
+        customerName: updates.customerName.trim(),
+        companyName: updates.companyName.trim(),
+        quantity: updates.quantity,
+        unitPrice: updates.unitPrice,
+        totalAmount,
+        location: updates.location,
+      });
+
+      logActivity('UPDATE', `Sale Record (${cleanId})`, undefined, {
+        after: `Customer: ${updates.customerName} | Company: ${updates.companyName} | Qty: ${updates.quantity} | Price: ₹${updates.unitPrice} | Loc: ${updates.location}`
+      });
+    } catch (error) {
+      console.warn('Failed to update sale record:', error);
+      throw error;
+    }
+  },
+
+  updatePurchase: async (purchaseId: string, updates: {
+    supplierName: string;
+    quantity: number;
+    unitPrice: number;
+    location: SaleLocation;
+  }) => {
+    if (!auth.currentUser) return;
+    if (!purchaseId || typeof purchaseId !== 'string' || !purchaseId.trim()) {
+      throw new Error('Invalid purchaseId provided for update.');
+    }
+    const cleanId = purchaseId.trim();
+    try {
+      const totalAmount = updates.quantity * updates.unitPrice;
+      const purchasesCacheKey = getUserCacheKey(PURCHASES_CACHE_KEY, auth.currentUser.uid);
+      const cachedPurchases = readLocalCache<PurchaseRecord>(purchasesCacheKey);
+      writeLocalCache(purchasesCacheKey, cachedPurchases.map(p => p.id === cleanId ? {
+        ...p,
+        supplierName: updates.supplierName.trim(),
+        quantity: updates.quantity,
+        unitPrice: updates.unitPrice,
+        totalAmount,
+        location: updates.location,
+      } : p));
+
+      await updateDoc(doc(db, PURCHASES_COLLECTION, cleanId), {
+        supplierName: updates.supplierName.trim(),
+        quantity: updates.quantity,
+        unitPrice: updates.unitPrice,
+        totalAmount,
+        location: updates.location,
+      });
+
+      logActivity('UPDATE', `Purchase Record (${cleanId})`, undefined, {
+        after: `Supplier: ${updates.supplierName} | Qty: ${updates.quantity} | Price: ₹${updates.unitPrice} | Loc: ${updates.location}`
+      });
+    } catch (error) {
+      console.warn('Failed to update purchase record:', error);
+      throw error;
+    }
+  },
+
+  getCustomerSuggestions: async (): Promise<{ customers: string[]; companies: string[] }> => {
+    try {
+      const sales = await inventoryService.fetchSalesOnce();
+      const customerSet = new Set<string>();
+      const companySet = new Set<string>();
+
+      sales.forEach((s) => {
+        if (s.customerName && s.customerName.trim()) {
+          customerSet.add(s.customerName.trim().toUpperCase());
+        }
+        if (s.companyName && s.companyName.trim()) {
+          companySet.add(s.companyName.trim().toUpperCase());
+        }
+      });
+
+      return {
+        customers: Array.from(customerSet).sort(),
+        companies: Array.from(companySet).sort(),
+      };
+    } catch (error) {
+      console.warn('Failed to get customer suggestions:', error);
+      return { customers: [], companies: [] };
+    }
+  },
+
+  getSupplierSuggestions: async (): Promise<string[]> => {
+    try {
+      const purchases = await inventoryService.fetchPurchasesOnce();
+      const supplierSet = new Set<string>();
+
+      purchases.forEach((p) => {
+        if (p.supplierName && p.supplierName.trim()) {
+          supplierSet.add(p.supplierName.trim().toUpperCase());
+        }
+      });
+
+      return Array.from(supplierSet).sort();
+    } catch (error) {
+      console.warn('Failed to get supplier suggestions:', error);
+      return [];
     }
   },
 

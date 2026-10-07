@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { CalendarDays, IndianRupee, Package, ShoppingCart, UserRound, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { InventoryItem, SaleLocation } from '../types';
+import { AutoCompleteInput } from './AutoCompleteInput';
+import { inventoryService } from '../services/inventoryService';
 
 interface SellItemModalProps {
   isOpen: boolean;
@@ -36,6 +38,17 @@ export const SellItemModal: React.FC<SellItemModalProps> = ({ isOpen, item, pref
   const [notes, setNotes] = useState('');
   const [location, setLocation] = useState<SaleLocation>(preferredLocation);
   const [soldAt, setSoldAt] = useState(() => new Date().toISOString().slice(0, 10));
+  const [customerSuggestions, setCustomerSuggestions] = useState<string[]>([]);
+  const [companySuggestions, setCompanySuggestions] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (isOpen) {
+      inventoryService.getCustomerSuggestions().then(({ customers, companies }) => {
+        setCustomerSuggestions(customers);
+        setCompanySuggestions(companies);
+      });
+    }
+  }, [isOpen]);
 
   useEffect(() => {
     if (item) {
@@ -166,37 +179,31 @@ export const SellItemModal: React.FC<SellItemModalProps> = ({ isOpen, item, pref
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-1">
                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Customer</label>
-                      <div className="relative">
-                        <UserRound className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
-                        <input
-                          type="text"
-                          required
-                          value={customerName}
-                          onChange={(e) => setCustomerName(e.target.value)}
-                          placeholder="John / Rahul"
-                          className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none font-bold uppercase"
-                        />
-                        {isCustomerInvalid && (
-                          <p className="text-[10px] font-bold text-red-600 uppercase tracking-wider mt-1">Customer is required</p>
-                        )}
-                      </div>
+                      <AutoCompleteInput
+                        value={customerName}
+                        onChange={setCustomerName}
+                        suggestions={customerSuggestions}
+                        placeholder="John / Rahul"
+                        icon={<UserRound size={14} />}
+                        className="py-2.5 pr-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none font-bold uppercase text-xs"
+                      />
+                      {isCustomerInvalid && (
+                        <p className="text-[10px] font-bold text-red-600 uppercase tracking-wider mt-1">Customer is required</p>
+                      )}
                     </div>
                     <div className="space-y-1">
                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Company</label>
-                      <div className="relative">
-                        <Package className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
-                        <input
-                          type="text"
-                          required
-                          value={companyName}
-                          onChange={(e) => setCompanyName(e.target.value)}
-                          placeholder="ABC TRADING"
-                          className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none font-bold uppercase"
-                        />
-                        {isCompanyInvalid && (
-                          <p className="text-[10px] font-bold text-red-600 uppercase tracking-wider mt-1">Company is required</p>
-                        )}
-                      </div>
+                      <AutoCompleteInput
+                        value={companyName}
+                        onChange={setCompanyName}
+                        suggestions={companySuggestions}
+                        placeholder="ABC TRADING"
+                        icon={<Package size={14} />}
+                        className="py-2.5 pr-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none font-bold uppercase text-xs"
+                      />
+                      {isCompanyInvalid && (
+                        <p className="text-[10px] font-bold text-red-600 uppercase tracking-wider mt-1">Company is required</p>
+                      )}
                     </div>
                   </div>
 

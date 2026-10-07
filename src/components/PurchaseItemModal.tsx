@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { CalendarDays, IndianRupee, Package, ShoppingBag, UserRound, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { InventoryItem, SaleLocation } from '../types';
+import { AutoCompleteInput } from './AutoCompleteInput';
+import { inventoryService } from '../services/inventoryService';
 
 interface PurchaseItemModalProps {
   isOpen: boolean;
@@ -36,6 +38,13 @@ export const PurchaseItemModal: React.FC<PurchaseItemModalProps> = ({ isOpen, it
   const [notes, setNotes] = useState('');
   const [location, setLocation] = useState<SaleLocation>(preferredLocation);
   const [purchasedAt, setPurchasedAt] = useState(() => new Date().toISOString().slice(0, 10));
+  const [supplierSuggestions, setSupplierSuggestions] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (isOpen) {
+      inventoryService.getSupplierSuggestions().then(setSupplierSuggestions);
+    }
+  }, [isOpen]);
 
   useEffect(() => {
     if (item) {
@@ -147,19 +156,17 @@ export const PurchaseItemModal: React.FC<PurchaseItemModalProps> = ({ isOpen, it
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-1">
                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Supplier</label>
-                      <div className="relative">
-                        <UserRound className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
-                        <input
-                          type="text"
-                          value={supplierName}
-                          onChange={(e) => setSupplierName(e.target.value)}
-                          placeholder="ABC Traders"
-                          className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none font-bold uppercase"
-                        />
-                        {isSupplierInvalid && (
-                          <p className="text-[10px] font-bold text-red-600 uppercase tracking-wider mt-1">Supplier is required</p>
-                        )}
-                      </div>
+                      <AutoCompleteInput
+                        value={supplierName}
+                        onChange={setSupplierName}
+                        suggestions={supplierSuggestions}
+                        placeholder="ABC Traders"
+                        icon={<UserRound size={14} />}
+                        className="py-2.5 pr-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none font-bold uppercase text-xs"
+                      />
+                      {isSupplierInvalid && (
+                        <p className="text-[10px] font-bold text-red-600 uppercase tracking-wider mt-1">Supplier is required</p>
+                      )}
                     </div>
                     <div className="space-y-1">
                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Location</label>
