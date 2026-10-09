@@ -10,6 +10,7 @@ interface InsertItemModalProps {
     name: string;
     price: number;
     boxPacking: string;
+    category?: string;
     upper: number;
     down: number;
     nagdevi: number;
@@ -21,6 +22,7 @@ export const InsertItemModal: React.FC<InsertItemModalProps> = ({ isOpen, onClos
   const [name, setName] = useState('');
   const [price, setPrice] = useState('');
   const [boxPacking, setBoxPacking] = useState('');
+  const [category, setCategory] = useState('');
   const [upper, setUpper] = useState('');
   const [down, setDown] = useState('');
   const [nagdevi, setNagdevi] = useState('');
@@ -30,11 +32,12 @@ export const InsertItemModal: React.FC<InsertItemModalProps> = ({ isOpen, onClos
       setName('');
       setPrice('');
       setBoxPacking('');
+      setCategory(itemBelow?.category || '');
       setUpper('');
       setDown('');
       setNagdevi('');
     }
-  }, [isOpen]);
+  }, [isOpen, itemBelow]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -42,6 +45,7 @@ export const InsertItemModal: React.FC<InsertItemModalProps> = ({ isOpen, onClos
       name: name.toUpperCase().trim(),
       price: Number(price) || 0,
       boxPacking: boxPacking.toUpperCase().trim(),
+      category: category.toUpperCase().trim(),
       upper: Number(upper) || 0,
       down: Number(down) || 0,
       nagdevi: Number(nagdevi) || 0
@@ -88,6 +92,16 @@ export const InsertItemModal: React.FC<InsertItemModalProps> = ({ isOpen, onClos
                 )}
                 <div className="space-y-4">
                   <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-500 uppercase px-1">Category / Model (e.g. MK-12, VILLIERS)</label>
+                    <input
+                      type="text"
+                      placeholder="E.G. MK-12, VILLIERS, PETROL"
+                      value={category}
+                      onChange={(e) => setCategory(e.target.value.toUpperCase())}
+                      className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all outline-none font-medium uppercase placeholder:text-slate-300"
+                    />
+                  </div>
+                  <div className="space-y-1">
                     <label className="text-xs font-bold text-slate-500 uppercase px-1">Item Name</label>
                     <input
                       required
@@ -108,7 +122,8 @@ export const InsertItemModal: React.FC<InsertItemModalProps> = ({ isOpen, onClos
                         step="0.01"
                         placeholder="0.00"
                         value={price}
-                        onChange={(e) => setPrice(e.target.value)}
+                        onFocus={(e) => e.target.select()}
+                        onChange={(e) => setPrice(e.target.value.replace(/^0+(?=\d)/, ''))}
                         className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all outline-none font-medium"
                       />
                     </div>
@@ -133,7 +148,8 @@ export const InsertItemModal: React.FC<InsertItemModalProps> = ({ isOpen, onClos
                           type="number"
                           placeholder="0"
                           value={upper}
-                          onChange={(e) => setUpper(e.target.value)}
+                          onFocus={(e) => e.target.select()}
+                          onChange={(e) => setUpper(e.target.value.replace(/^0+(?=\d)/, ''))}
                           className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all outline-none text-center font-bold"
                         />
                       </div>
@@ -143,7 +159,8 @@ export const InsertItemModal: React.FC<InsertItemModalProps> = ({ isOpen, onClos
                           type="number"
                           placeholder="0"
                           value={down}
-                          onChange={(e) => setDown(e.target.value)}
+                          onFocus={(e) => e.target.select()}
+                          onChange={(e) => setDown(e.target.value.replace(/^0+(?=\d)/, ''))}
                           className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all outline-none text-center font-bold"
                         />
                       </div>
@@ -153,7 +170,8 @@ export const InsertItemModal: React.FC<InsertItemModalProps> = ({ isOpen, onClos
                           type="number"
                           placeholder="0"
                           value={nagdevi}
-                          onChange={(e) => setNagdevi(e.target.value)}
+                          onFocus={(e) => e.target.select()}
+                          onChange={(e) => setNagdevi(e.target.value.replace(/^0+(?=\d)/, ''))}
                           className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all outline-none text-center font-bold"
                         />
                       </div>

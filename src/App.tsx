@@ -9,9 +9,9 @@ import { ActivityFeed } from './components/ActivityLog';
 import { SalesTab } from './components/SalesTab';
 import { PurchaseTab } from './components/PurchaseTab';
 import { StatusModal, StatusType } from './components/StatusModal';
-import { inventoryService } from './services/inventoryService';
+import { inventoryService, subscribeToQuotaExceeded } from './services/inventoryService';
 import { InventoryItem, AuditLog } from './types';
-import { Package, Plus, Loader2, LayoutDashboard, Database, TrendingUp, ChevronUp, ChevronDown, History } from 'lucide-react';
+import { Package, Plus, Loader2, LayoutDashboard, Database, TrendingUp, ChevronUp, ChevronDown, History, AlertTriangle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 export default function App() {
@@ -21,6 +21,7 @@ export default function App() {
   const [view, setView] = useState<'inventory' | 'sales' | 'purchase' | 'history'>('inventory');
   const [isProcessing, setIsProcessing] = useState(false);
   const [locationFilter, setLocationFilter] = useState<'all' | 'upper' | 'down' | 'nagdevi'>('all');
+  const [quotaExceeded, setQuotaExceeded] = useState(false);
   
   // Status Modal State
   const [statusState, setStatusState] = useState<{
@@ -51,22 +52,25 @@ export default function App() {
       return;
     }
 
+    const unsubscribeQuota = subscribeToQuotaExceeded(setQuotaExceeded);
     const unsubscribeInventory = inventoryService.subscribeToInventory((newItems) => {
       setItems(newItems);
     });
 
     return () => {
+      unsubscribeQuota();
       unsubscribeInventory();
     };
   }, [user]);
 
-  const handleAddSingleItem = async (formItem: { name: string; price: string; boxPacking: string; upper: string; down: string; nagdevi: string }) => {
+  const handleAddSingleItem = async (formItem: { name: string; price: string; boxPacking: string; category?: string; upper: string; down: string; nagdevi: string }) => {
     const upper = Number(formItem.upper) || 0;
     const down = Number(formItem.down) || 0;
     const nagdevi = Number(formItem.nagdevi) || 0;
     const priceValue = Number(formItem.price) || 0;
     const nameUpper = formItem.name.toUpperCase();
     const boxPackingUpper = formItem.boxPacking.toUpperCase().trim();
+    const categoryUpper = formItem.category ? formItem.category.toUpperCase().trim() : undefined;
 
     // 1. Generate optimistic item with a temporary ID
     const tempId = `temp-${Date.now()}`;
@@ -83,6 +87,7 @@ export default function App() {
       updatedAt: { seconds: Math.floor(Date.now() / 1000), nanoseconds: 0 } as any,
       orderIndex: Date.now(),
       boxPacking: boxPackingUpper,
+      category: categoryUpper,
     };
 
     // Calculate actual order index using the same alphabetical insertion logic
@@ -140,6 +145,7 @@ export default function App() {
         downOfficeQty: down,
         nagdeviOfficeQty: nagdevi,
         boxPacking: boxPackingUpper || undefined,
+        category: categoryUpper,
       }, items);
     } catch (error) {
       // Revert from UI on rare background failures
@@ -195,6 +201,15 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
       <Navbar user={user} />
+
+      {quotaExceeded && (
+        <div className="bg-amber-500 text-white px-4 py-2 text-xs font-bold flex items-center justify-center gap-2 shadow-sm text-center">
+          <AlertTriangle size={16} className="shrink-0" />
+          <span>
+            Firebase Daily Read Quota (50,000 free reads) reached for today. Running safely in offline cache mode with your local data. To restore live database reads, upgrade to Blaze (Pay-as-you-go) in Firebase Console, or wait for daily quota reset at 12:30 PM IST.
+          </span>
+        </div>
+      )}
 
       <main className="flex-1 w-full max-w-[1700px] mx-auto p-4 md:p-8">
         <AnimatePresence mode="wait">
@@ -318,15 +333,15 @@ export default function App() {
               </div>
 
               <div className={view === 'sales' ? 'block max-w-6xl' : 'hidden'}>
-                <SalesTab />
+                {view === 'sales' && <SalesTab />}
               </div>
 
               <div className={view === 'purchase' ? 'block max-w-6xl' : 'hidden'}>
-                <PurchaseTab />
+                {view === 'purchase' && <PurchaseTab />}
               </div>
 
-              <div className={view === 'history' ? 'block max-w-4xl' : 'hidden'}>
-                <ActivityFeed />
+              <div className={view === 'history' ? 'block max-w-7xl w-full mx-auto' : 'hidden'}>
+                {view === 'history' && <ActivityFeed />}
               </div>
             </motion.div>
           )}

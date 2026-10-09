@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Building2, CalendarClock, IndianRupee, MapPinned, Pencil, Search, ShoppingBag, Trash2, UserRound } from 'lucide-react';
+import { Building2, CalendarClock, IndianRupee, MapPinned, Pencil, Search, ShoppingBag, Trash2, UserRound, FileSpreadsheet } from 'lucide-react';
 import { inventoryService } from '../services/inventoryService';
 import { SaleRecord, SaleLocation } from '../types';
 import { DeleteRecordModal } from './DeleteRecordModal';
@@ -213,6 +213,30 @@ export const SalesTab: React.FC = () => {
     }
   };
 
+  const handleExportCSV = () => {
+    if (filteredSales.length === 0) return;
+    const headers = ['Date', 'Item Name', 'Customer Name', 'Company Name', 'Quantity', 'Rate (₹)', 'Total Amount (₹)', 'Location', 'Notes'];
+    const rows = filteredSales.map((s) => [
+      `"${formatRecordDate(s.soldAt)}"`,
+      `"${(s.itemName || '').replace(/"/g, '""')}"`,
+      `"${(s.customerName || '').replace(/"/g, '""')}"`,
+      `"${(s.companyName || '').replace(/"/g, '""')}"`,
+      s.quantity,
+      s.unitPrice,
+      s.totalAmount,
+      `"${s.location}"`,
+      `"${(s.notes || '').replace(/"/g, '""')}"`
+    ]);
+    const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `sales_ledger_${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="space-y-6">
       {/* Metric Cards */}
@@ -270,9 +294,19 @@ export const SalesTab: React.FC = () => {
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
         <div className="px-6 py-4 border-b border-slate-200 bg-slate-50/60 flex items-center justify-between">
           <h2 className="text-lg font-black text-slate-900 uppercase tracking-tight">Sales Ledger</h2>
-          <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-            Sorted by Most Recent
-          </span>
+          <div className="flex items-center gap-3">
+            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider hidden sm:inline">
+              Sorted by Most Recent
+            </span>
+            <button
+              onClick={handleExportCSV}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold uppercase transition-all shadow-sm"
+              title="Download Sales as CSV"
+            >
+              <FileSpreadsheet size={14} />
+              <span>Export CSV</span>
+            </button>
+          </div>
         </div>
 
         <div className="overflow-auto max-h-[calc(100vh-260px)]">

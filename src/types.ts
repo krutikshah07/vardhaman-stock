@@ -11,6 +11,7 @@ export interface InventoryItem {
   ownerId: string;
   orderIndex: number;
   boxPacking?: string;
+  category?: string;
 }
 
 export type NewInventoryItem = Omit<InventoryItem, 'id'>;
@@ -61,4 +62,22 @@ export interface AuditLog {
   timestamp: any;
   performedBy: string;
   performedByEmail: string;
+}
+
+export interface ReconciliationReport {
+  timestamp: string;
+  beforeCount: number;
+  afterCount: number;
+  beforeTotalQty: number;
+  afterTotalQty: number;
+  exactMatchesCount: number;
+  newItems: string[];
+  missingItems: string[];
+  changedItems: {
+    name: string;
+    beforeQty: number;
+    afterQty: number;
+    beforePrice: number;
+    afterPrice: number;
+  }[];
 }

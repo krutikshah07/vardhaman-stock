@@ -3,13 +3,109 @@ import { Upload, FileSpreadsheet, X, CheckCircle2 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import mammoth from 'mammoth';
 import { inventoryService } from '../services/inventoryService';
-import { serverTimestamp } from 'firebase/firestore';
+import { serverTimestamp, getDocs, collection, Timestamp } from 'firebase/firestore';
+import { db } from '../lib/firebase';
 import { StatusModal, StatusType } from './StatusModal';
+import { ReconciliationModal } from './ReconciliationModal';
+import { ReconciliationReport } from '../types';
+
+export const parseDateValue = (rawVal: any): Timestamp | undefined => {
+  if (rawVal === undefined || rawVal === null || rawVal === '') return undefined;
+
+  // 1. If already a Firestore Timestamp
+  if (rawVal instanceof Timestamp) return rawVal;
+  if (typeof rawVal === 'object' && typeof rawVal.seconds === 'number') {
+    return new Timestamp(rawVal.seconds, rawVal.nanoseconds || 0);
+  }
+
+  // 2. If it's a native JS Date object
+  if (rawVal instanceof Date) {
+    if (!isNaN(rawVal.getTime())) return Timestamp.fromDate(rawVal);
+    return undefined;
+  }
+
+  // 3. If it's a numeric timestamp or Excel serial date
+  if (typeof rawVal === 'number') {
+    if (rawVal > 1000000000000) {
+      return Timestamp.fromMillis(rawVal);
+    }
+    if (rawVal > 1000000000) {
+      return Timestamp.fromMillis(rawVal * 1000);
+    }
+    // Excel serial date code (e.g. 46304 is Oct 9, 2026)
+    if (rawVal > 30000 && rawVal < 65000) {
+      const jsDate = new Date(Math.round((rawVal - 25569) * 86400 * 1000));
+      if (!isNaN(jsDate.getTime())) return Timestamp.fromDate(jsDate);
+    }
+    return undefined;
+  }
+
+  // 4. If string
+  if (typeof rawVal === 'string') {
+    const str = rawVal.trim();
+    if (!str) return undefined;
+
+    // Check if numeric string
+    if (/^\d+(\.\d+)?$/.test(str)) {
+      return parseDateValue(Number(str));
+    }
+
+    // 1. ISO format: YYYY-MM-DD or YYYY/MM/DD
+    const ymdMatch = str.match(/^(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})/);
+    if (ymdMatch) {
+      const year = parseInt(ymdMatch[1], 10);
+      const month = parseInt(ymdMatch[2], 10) - 1;
+      const day = parseInt(ymdMatch[3], 10);
+      const d = new Date(year, month, day);
+      if (!isNaN(d.getTime())) return Timestamp.fromDate(d);
+    }
+
+    // 2. Named months: "09-Oct-2026", "09 Oct 2026", "9 October 2026", "27 July 2026"
+    const monthNames: Record<string, number> = {
+      jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
+      jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11
+    };
+    const textMatch = str.match(/^(\d{1,2})[\s\-\/\.]([A-Za-z]+)(?:[\s\-\/\.](\d{2,4}))?/);
+    if (textMatch) {
+      const day = parseInt(textMatch[1], 10);
+      const monKey = textMatch[2].toLowerCase().slice(0, 3);
+      if (monKey in monthNames) {
+        const month = monthNames[monKey];
+        let year = textMatch[3] ? parseInt(textMatch[3], 10) : new Date().getFullYear();
+        if (year < 100) year += 2000;
+        const d = new Date(year, month, day);
+        if (!isNaN(d.getTime())) return Timestamp.fromDate(d);
+      }
+    }
+
+    // 3. Indian / British standard format: DD/MM/YYYY or DD-MM-YYYY or DD.MM.YYYY
+    // STRICT PRIORITY: First number is Day, second number is Month (e.g. 09/10/2026 = 9th October, NOT 10th September)
+    const dmyMatch = str.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})/);
+    if (dmyMatch) {
+      const day = parseInt(dmyMatch[1], 10);
+      const month = parseInt(dmyMatch[2], 10) - 1;
+      let year = parseInt(dmyMatch[3], 10);
+      if (year < 100) year += 2000;
+      const d = new Date(year, month, day);
+      if (!isNaN(d.getTime())) return Timestamp.fromDate(d);
+    }
+
+    // 4. Standard Date.parse fallback
+    const parsedMs = Date.parse(str);
+    if (!isNaN(parsedMs)) {
+      return Timestamp.fromMillis(parsedMs);
+    }
+  }
+
+  return undefined;
+};
 
 export const ExcelImport: React.FC = () => {
   const [isDragging, setIsDragging] = React.useState(false);
   const [status, setStatus] = React.useState<'idle' | 'processing' | 'success' | 'error'>('idle');
+  const [importProgress, setImportProgress] = React.useState<{ current: number; total: number; stage?: string } | null>(null);
   const [shouldClear, setShouldClear] = React.useState(false);
+  const [reconciliationReport, setReconciliationReport] = React.useState<ReconciliationReport | null>(null);
   const [statusModal, setStatusModal] = React.useState<{
     isOpen: boolean;
     type: StatusType;
@@ -24,15 +120,95 @@ export const ExcelImport: React.FC = () => {
 
   const processFile = async (file: File) => {
     setStatus('processing');
+    setImportProgress({ current: 0, total: 100, stage: 'Preparing import...' });
     
     try {
+      // 1. Snapshot the current live state before any deletion/import for Reconciliation
+      let baselineBeforeItems: Array<{ name: string; quantity?: number; price?: number }> = [];
+      try {
+        const liveSnap = await getDocs(collection(db, 'inventory'));
+        baselineBeforeItems = liveSnap.docs.map(d => ({
+          name: d.data().name,
+          quantity: d.data().quantity,
+          price: d.data().price,
+        }));
+      } catch (snapErr) {
+        console.warn('Could not snapshot baseline items:', snapErr);
+      }
+
+      // 2. Safety First: Always clone current data to backup collection before any destructive import
+      try {
+        await inventoryService.backupAllDataToFirestoreCollection();
+        console.log('Automated safety backup completed before import.');
+      } catch (backupErr) {
+        console.warn('Pre-import safety backup failed:', backupErr);
+      }
+
       if (shouldClear) {
-        await inventoryService.deleteAllItems();
+        setImportProgress({ current: 0, total: 100, stage: 'Deleting existing items in batches...' });
+        await inventoryService.deleteAllItems((deleted, total) => {
+          setImportProgress({ current: deleted, total, stage: `Deleted ${deleted}/${total} existing items...` });
+        });
       }
 
       const reader = new FileReader();
       
-      if (file.name.endsWith('.docx')) {
+      if (file.name.endsWith('.json')) {
+        reader.onload = async (e) => {
+          try {
+            const content = e.target?.result as string;
+            const parsed = JSON.parse(content);
+            const rawItems = Array.isArray(parsed) ? parsed : (parsed.inventory || []);
+
+            if (rawItems.length > 0) {
+              const formattedItems = rawItems.map((item: any) => ({
+                name: String(item.name || '').trim().toUpperCase(),
+                price: Number(item.price) || 0,
+                quantity: Number(item.quantity) || 0,
+                upperOfficeQty: Number(item.upperOfficeQty) || 0,
+                downOfficeQty: Number(item.downOfficeQty) || 0,
+                nagdeviOfficeQty: Number(item.nagdeviOfficeQty) || 0,
+                boxPacking: item.boxPacking ? String(item.boxPacking).trim().toUpperCase() : undefined,
+                category: item.category ? String(item.category).trim().toUpperCase() : undefined,
+                updatedAt: item.updatedAt?.seconds 
+                  ? new Timestamp(item.updatedAt.seconds, item.updatedAt.nanoseconds || 0)
+                  : item.updatedAt,
+                createdAt: item.createdAt?.seconds 
+                  ? new Timestamp(item.createdAt.seconds, item.createdAt.nanoseconds || 0)
+                  : item.createdAt,
+              })).filter((i: any) => i.name.length > 0);
+
+              await inventoryService.importItems(formattedItems as any);
+              setStatus('success');
+              setStatusModal({
+                isOpen: true,
+                type: 'success',
+                title: 'Backup Restored',
+                message: `Successfully restored ${formattedItems.length} items from JSON backup.`
+              });
+              setTimeout(() => setStatus('idle'), 3000);
+            } else {
+              setStatus('idle');
+              setStatusModal({
+                isOpen: true,
+                type: 'error',
+                title: 'No Items Found',
+                message: 'No valid items found inside this JSON backup file.'
+              });
+            }
+          } catch (err: any) {
+            console.error('JSON restore error:', err);
+            setStatus('error');
+            setStatusModal({
+              isOpen: true,
+              type: 'error',
+              title: 'Restore Failed',
+              message: err?.message || 'Could not parse JSON backup file.'
+            });
+          }
+        };
+        reader.readAsText(file);
+      } else if (file.name.endsWith('.docx')) {
         reader.onload = async (e) => {
           try {
             const arrayBuffer = e.target?.result as ArrayBuffer;
@@ -281,46 +457,136 @@ export const ExcelImport: React.FC = () => {
         reader.onload = async (e) => {
           try {
             const data = new Uint8Array(e.target?.result as ArrayBuffer);
-            const workbook = XLSX.read(data, { type: 'array' });
+            // Use cellDates: false and raw: true so SheetJS preserves raw strings (09/10/2026) instead of parsing as US MM/DD/YYYY
+            const workbook = XLSX.read(data, { type: 'array', cellDates: false, raw: true });
             const firstSheetName = workbook.SheetNames[0];
-            const items = XLSX.utils.sheet_to_json(workbook.Sheets[firstSheetName]);
+            const rawRows = XLSX.utils.sheet_to_json<Record<string, any>>(workbook.Sheets[firstSheetName], { raw: true });
 
-            const formattedItems = items.map((row: any) => {
-              const upper = Number(row['Upper Office'] || row.upperOfficeQty || 0);
-              const down = Number(row['Down Office'] || row.downOfficeQty || 0);
-              const nagdevi = Number(row['Nagdevi Office'] || row.nagdeviOfficeQty || 0);
-              const price = Number(row.Price || row.price || 0);
-              const name = String(row.Name || row.name || 'Unnamed Item');
-              const total = row.Quantity || row.quantity || (upper + down + nagdevi);
-              const boxPacking = String(row['Box Packing'] || row['boxPacking'] || row['Packing'] || row['packing'] || '').trim();
+            console.log('Uploaded File Parsed:', {
+              sheetName: firstSheetName,
+              rowCount: rawRows?.length,
+              sampleRow: rawRows?.[0],
+              sampleHeaders: rawRows?.[0] ? Object.keys(rawRows[0]) : []
+            });
+
+            if (!rawRows || rawRows.length === 0) {
+              setImportProgress(null);
+              setStatus('idle');
+              setStatusModal({
+                isOpen: true,
+                type: 'error',
+                title: 'No Items Found',
+                message: 'This Excel sheet has no rows or is empty.'
+              });
+              return;
+            }
+
+            const formattedItems = rawRows.map((row, index) => {
+              // Create normalized key-value lookup (lowercase, stripped spaces)
+              const cleanRow: Record<string, any> = {};
+              Object.keys(row).forEach(k => {
+                const normalizedKey = k.toLowerCase().replace(/[^a-z0-9]/g, '');
+                cleanRow[normalizedKey] = row[k];
+              });
+
+              const name = String(
+                cleanRow['itemname'] || 
+                cleanRow['name'] || 
+                cleanRow['item'] || 
+                cleanRow['particulars'] || 
+                cleanRow['description'] || 
+                ''
+              ).trim();
+
+              const price = Number(cleanRow['price'] || cleanRow['rate'] || cleanRow['unitprice'] || 0) || 0;
+              const upper = Number(cleanRow['upperoffice'] || cleanRow['upperofficeqty'] || cleanRow['upper'] || 0) || 0;
+              const down = Number(cleanRow['downoffice'] || cleanRow['downofficeqty'] || cleanRow['down'] || 0) || 0;
+              const nagdevi = Number(cleanRow['nagdevioffice'] || cleanRow['nagdeviofficeqty'] || cleanRow['nagdevi'] || 0) || 0;
+              const total = Number(cleanRow['totalqty'] || cleanRow['total'] || cleanRow['quantity'] || cleanRow['qty'] || (upper + down + nagdevi)) || 0;
+              const boxPacking = String(cleanRow['boxpacking'] || cleanRow['packing'] || cleanRow['pack'] || '').trim();
+              const category = String(
+                cleanRow['categorymodel'] || 
+                cleanRow['category'] || 
+                cleanRow['cat'] || 
+                cleanRow['group'] || 
+                cleanRow['model'] || 
+                cleanRow['machine'] || 
+                ''
+              ).trim();
+
+              // Parse Last Updated date from any matching column
+              const rawDateVal = 
+                cleanRow['lastupdated'] || 
+                cleanRow['lastupdateddate'] || 
+                cleanRow['lastupdate'] || 
+                cleanRow['updatedat'] || 
+                cleanRow['updateddate'] || 
+                cleanRow['updated'] || 
+                cleanRow['lastmodified'] || 
+                cleanRow['modifieddate'] || 
+                cleanRow['stockdate'] || 
+                cleanRow['date'];
+
+              const parsedUpdatedAt = parseDateValue(rawDateVal);
+
+              // Maintain exact sequence/row position from spreadsheet
+              const rowOrder = Number(cleanRow['srno'] || cleanRow['sno'] || cleanRow['no'] || cleanRow['seq'] || cleanRow['orderindex']);
+              const orderIndex = !isNaN(rowOrder) && rowOrder > 0 ? rowOrder * 100 : (index + 1) * 100;
 
               return {
                 name: name.toUpperCase(),
                 price,
-                quantity: Number(total),
+                quantity: total,
                 upperOfficeQty: upper,
                 downOfficeQty: down,
                 nagdeviOfficeQty: nagdevi,
-                createdAt: serverTimestamp(),
                 boxPacking: boxPacking ? boxPacking.toUpperCase() : undefined,
+                category: category ? category.toUpperCase() : undefined,
+                updatedAt: parsedUpdatedAt,
+                orderIndex,
               };
-            });
+            }).filter(item => item.name && item.name.length > 0 && item.name !== 'UNNAMED ITEM');
 
             if (formattedItems.length > 0) {
-              await inventoryService.importItems(formattedItems as any);
-              setStatus('success');
-              setStatusModal({
-                isOpen: true,
-                type: 'success',
-                title: 'Import Successful',
-                message: `${formattedItems.length} items have been imported.`
+              setImportProgress({ current: 0, total: formattedItems.length, stage: 'Importing items in batches of 500...' });
+              await inventoryService.importItems(formattedItems as any, (current, total) => {
+                setImportProgress({ current, total, stage: `Imported ${current} / ${total} items...` });
               });
+              setImportProgress(null);
+              setStatus('success');
+
+              if (baselineBeforeItems.length > 0) {
+                const report = inventoryService.reconcileInventory(baselineBeforeItems, formattedItems);
+                setReconciliationReport(report);
+              } else {
+                setStatusModal({
+                  isOpen: true,
+                  type: 'success',
+                  title: 'Import Successful',
+                  message: `${formattedItems.length} items have been imported.`
+                });
+              }
+
               setTimeout(() => setStatus('idle'), 3000);
             } else {
+              setImportProgress(null);
               setStatus('idle');
+              setStatusModal({
+                isOpen: true,
+                type: 'error',
+                title: 'No Items Found',
+                message: 'Could not find an "Item Name" or "Name" column in this Excel sheet. Please check the column header.'
+              });
             }
-          } catch (err) {
-            throw err;
+          } catch (err: any) {
+            console.error('Excel row processing / import error:', err);
+            setStatus('error');
+            setStatusModal({
+              isOpen: true,
+              type: 'error',
+              title: 'Import Error',
+              message: err?.message || 'Could not parse or write items from this spreadsheet.'
+            });
           }
         };
         reader.readAsArrayBuffer(file);
@@ -417,6 +683,24 @@ export const ExcelImport: React.FC = () => {
           />
         </div>
 
+        {status === 'processing' && importProgress && (
+          <div className="mt-4 p-4 bg-blue-50/90 border border-blue-200 rounded-xl space-y-2 animate-fadeIn">
+            <div className="flex justify-between items-center text-xs font-black text-blue-800 uppercase tracking-wider">
+              <span>{importProgress.stage || 'Processing in batches...'}</span>
+              <span>{importProgress.current} / {importProgress.total}</span>
+            </div>
+            <div className="w-full bg-blue-200/80 rounded-full h-2.5 overflow-hidden">
+              <div 
+                className="bg-blue-600 h-2.5 transition-all duration-200 rounded-full"
+                style={{ width: `${importProgress.total > 0 ? Math.min(100, Math.round((importProgress.current / importProgress.total) * 100)) : 0}%` }}
+              />
+            </div>
+            <p className="text-[10px] text-blue-600 font-bold uppercase tracking-wider text-right">
+              {importProgress.total > 0 ? `${Math.round((importProgress.current / importProgress.total) * 100)}% Complete` : ''}
+            </p>
+          </div>
+        )}
+
         <div className="mt-4 flex items-center gap-3 p-3 bg-red-50/50 rounded-xl border border-red-100">
           <input
             type="checkbox"
@@ -445,6 +729,12 @@ export const ExcelImport: React.FC = () => {
         type={statusModal.type}
         title={statusModal.title}
         message={statusModal.message}
+      />
+
+      <ReconciliationModal
+        isOpen={Boolean(reconciliationReport)}
+        onClose={() => setReconciliationReport(null)}
+        report={reconciliationReport}
       />
     </div>
   );

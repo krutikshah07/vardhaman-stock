@@ -3,7 +3,7 @@ import { Plus, ChevronUp, ChevronDown, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 interface ManualEntryFormProps {
-  onAdd: (item: { name: string; price: string; boxPacking: string; upper: string; down: string; nagdevi: string }) => Promise<void>;
+  onAdd: (item: { name: string; price: string; boxPacking: string; category?: string; upper: string; down: string; nagdevi: string }) => Promise<void>;
   isProcessing: boolean;
 }
 
@@ -13,6 +13,7 @@ export const ManualEntryForm: React.FC<ManualEntryFormProps> = React.memo(({ onA
     name: '',
     price: '',
     boxPacking: '',
+    category: '',
     upper: '',
     down: '',
     nagdevi: ''
@@ -23,7 +24,7 @@ export const ManualEntryForm: React.FC<ManualEntryFormProps> = React.memo(({ onA
     if (!newItem.name || isProcessing) return;
     
     await onAdd(newItem);
-    setNewItem({ name: '', price: '', boxPacking: '', upper: '', down: '', nagdevi: '' });
+    setNewItem({ name: '', price: '', boxPacking: '', category: '', upper: '', down: '', nagdevi: '' });
   };
 
   return (
@@ -52,16 +53,28 @@ export const ManualEntryForm: React.FC<ManualEntryFormProps> = React.memo(({ onA
           >
             <form onSubmit={handleSubmit} className="p-6 space-y-6">
               <div className="space-y-4">
-                <div>
-                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Item Name</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="E.G. BRASS BUSH 1/2"
-                    className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all uppercase placeholder:text-slate-300 font-bold"
-                    value={newItem.name}
-                    onChange={(e) => setNewItem({ ...newItem, name: e.target.value })}
-                  />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Category / Model</label>
+                    <input
+                      type="text"
+                      placeholder="E.G. MK-12, VILLIERS"
+                      className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all uppercase placeholder:text-slate-300 font-bold"
+                      value={newItem.category}
+                      onChange={(e) => setNewItem({ ...newItem, category: e.target.value.toUpperCase() })}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Item Name</label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="E.G. BRASS BUSH 1/2"
+                      className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all uppercase placeholder:text-slate-300 font-bold"
+                      value={newItem.name}
+                      onChange={(e) => setNewItem({ ...newItem, name: e.target.value.toUpperCase() })}
+                    />
+                  </div>
                 </div>
                 
                 <div className="grid grid-cols-2 gap-4">
@@ -73,7 +86,8 @@ export const ManualEntryForm: React.FC<ManualEntryFormProps> = React.memo(({ onA
                       placeholder="0.00"
                       className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-500 outline-none font-mono font-bold"
                       value={newItem.price}
-                      onChange={(e) => setNewItem({ ...newItem, price: e.target.value })}
+                      onFocus={(e) => e.target.select()}
+                      onChange={(e) => setNewItem({ ...newItem, price: e.target.value.replace(/^0+(?=\d)/, '') })}
                     />
                   </div>
                   <div>
@@ -83,7 +97,7 @@ export const ManualEntryForm: React.FC<ManualEntryFormProps> = React.memo(({ onA
                       placeholder="E.G. 50 PCS / BOX"
                       className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-500 outline-none font-bold uppercase placeholder:text-slate-300"
                       value={newItem.boxPacking}
-                      onChange={(e) => setNewItem({ ...newItem, boxPacking: e.target.value })}
+                      onChange={(e) => setNewItem({ ...newItem, boxPacking: e.target.value.toUpperCase() })}
                     />
                   </div>
                 </div>
@@ -97,7 +111,8 @@ export const ManualEntryForm: React.FC<ManualEntryFormProps> = React.memo(({ onA
                       placeholder="QTY"
                       className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-500 outline-none font-bold"
                       value={newItem.upper}
-                      onChange={(e) => setNewItem({ ...newItem, upper: e.target.value })}
+                      onFocus={(e) => e.target.select()}
+                      onChange={(e) => setNewItem({ ...newItem, upper: e.target.value.replace(/^0+(?=\d)/, '') })}
                     />
                   </div>
                   <div>
@@ -108,7 +123,8 @@ export const ManualEntryForm: React.FC<ManualEntryFormProps> = React.memo(({ onA
                       placeholder="QTY"
                       className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-500 outline-none font-bold"
                       value={newItem.down}
-                      onChange={(e) => setNewItem({ ...newItem, down: e.target.value })}
+                      onFocus={(e) => e.target.select()}
+                      onChange={(e) => setNewItem({ ...newItem, down: e.target.value.replace(/^0+(?=\d)/, '') })}
                     />
                   </div>
                 </div>
@@ -122,7 +138,8 @@ export const ManualEntryForm: React.FC<ManualEntryFormProps> = React.memo(({ onA
                       placeholder="QTY"
                       className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-500 outline-none font-bold"
                       value={newItem.nagdevi}
-                      onChange={(e) => setNewItem({ ...newItem, nagdevi: e.target.value })}
+                      onFocus={(e) => e.target.select()}
+                      onChange={(e) => setNewItem({ ...newItem, nagdevi: e.target.value.replace(/^0+(?=\d)/, '') })}
                     />
                   </div>
                 </div>

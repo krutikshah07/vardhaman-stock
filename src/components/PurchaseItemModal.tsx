@@ -32,7 +32,7 @@ const locationLabel: Record<SaleLocation, string> = {
 
 export const PurchaseItemModal: React.FC<PurchaseItemModalProps> = ({ isOpen, item, preferredLocation, onClose, onConfirm }) => {
   const [quantity, setQuantity] = useState<number | ''>(1);
-  const [unitPrice, setUnitPrice] = useState(0);
+  const [unitPrice, setUnitPrice] = useState<number | ''>('');
   const [supplierName, setSupplierName] = useState('');
   const [boxPacking, setBoxPacking] = useState(item?.boxPacking || '');
   const [notes, setNotes] = useState('');
@@ -50,7 +50,7 @@ export const PurchaseItemModal: React.FC<PurchaseItemModalProps> = ({ isOpen, it
     if (item) {
       const today = new Date().toISOString().slice(0, 10);
       setLocation(preferredLocation);
-      setUnitPrice(item.price || 0);
+      setUnitPrice(item.price ? item.price : '');
       setQuantity(1);
       setSupplierName('');
       setBoxPacking(item.boxPacking || '');
@@ -60,7 +60,8 @@ export const PurchaseItemModal: React.FC<PurchaseItemModalProps> = ({ isOpen, it
   }, [item, preferredLocation, isOpen]);
 
   const parsedQuantity = Number(quantity) || 0;
-  const totalAmount = parsedQuantity * unitPrice;
+  const parsedUnitPrice = Number(unitPrice) || 0;
+  const totalAmount = parsedQuantity * parsedUnitPrice;
   const isSupplierInvalid = !supplierName.trim();
   const isQuantityInvalid = parsedQuantity <= 0;
 
@@ -130,7 +131,17 @@ export const PurchaseItemModal: React.FC<PurchaseItemModalProps> = ({ isOpen, it
                         type="number"
                         min="1"
                         value={quantity}
-                        onChange={(e) => setQuantity(e.target.value === '' ? '' : Number(e.target.value))}
+                        onFocus={(e) => e.target.select()}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (val === '') {
+                            setQuantity('');
+                          } else {
+                            const cleaned = val.replace(/^0+(?=\d)/, '');
+                            const num = parseInt(cleaned, 10);
+                            setQuantity(isNaN(num) ? '' : num);
+                          }
+                        }}
                         className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none font-bold"
                       />
                       {isQuantityInvalid && (
@@ -138,15 +149,26 @@ export const PurchaseItemModal: React.FC<PurchaseItemModalProps> = ({ isOpen, it
                       )}
                     </div>
                     <div className="space-y-1">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Unit Cost</label>
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Unit Cost / Price (₹)</label>
                       <div className="relative">
                         <IndianRupee className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
                         <input
                           type="number"
                           min="0"
                           step="0.01"
+                          placeholder="0.00"
                           value={unitPrice}
-                          onChange={(e) => setUnitPrice(Number(e.target.value) || 0)}
+                          onFocus={(e) => e.target.select()}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            if (val === '') {
+                              setUnitPrice('');
+                            } else {
+                              const cleaned = val.replace(/^0+(?=\d)/, '');
+                              const num = parseFloat(cleaned);
+                              setUnitPrice(isNaN(num) ? '' : (cleaned as any));
+                            }
+                          }}
                           className="w-full pl-9 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none font-bold"
                         />
                       </div>

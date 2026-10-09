@@ -1,5 +1,6 @@
 import React, { useCallback, useMemo, useState, useEffect, useRef } from 'react';
-import { Search, Plus, Minus, Trash2, TrendingDown, TrendingUp, PackageSearch, Pencil, Loader2, Calendar } from 'lucide-react';
+import { Search, Plus, Minus, Trash2, TrendingDown, TrendingUp, PackageSearch, Pencil, Loader2, Calendar, FileSpreadsheet, Database, Download, Filter } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import { InventoryItem, SaleLocation } from '../types';
 import { inventoryService } from '../services/inventoryService';
 import { motion, AnimatePresence } from 'motion/react';
@@ -206,10 +207,11 @@ const InlinePriceInput = React.memo(({
   }, [value]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const raw = e.target.value;
+    let raw = e.target.value;
     if (raw === "") {
       setTempVal("");
     } else {
+      raw = raw.replace(/^0+(?=\d)/, '');
       const parsed = parseFloat(raw);
       if (!isNaN(parsed) && parsed >= 0) {
         setTempVal(raw);
@@ -300,6 +302,7 @@ const InventoryRow = React.memo(({
   isLastUpdated?: boolean;
 }) => (
   <tr
+    style={{ contentVisibility: 'auto' as any, containIntrinsicSize: '68px' }}
     className={`group transition-colors duration-150 border-l-4 ${
       isEditing 
         ? "bg-indigo-50 border-indigo-500 shadow-[inset_0_1px_3px_rgba(99,102,241,0.05)]" 
@@ -308,15 +311,22 @@ const InventoryRow = React.memo(({
         : "hover:bg-slate-50/65 border-transparent focus-within:bg-blue-50/70 focus-within:border-blue-400 focus-within:shadow-sm focus-within:z-10"
     }`}
   >
-    <td className={`px-6 py-4 whitespace-nowrap sticky left-0 z-20 border-r border-slate-200 transition-colors shadow-[2px_0_5px_rgba(0,0,0,0.02)] ${
+    <td className={`px-6 py-4 sticky left-0 z-20 border-r border-slate-200 transition-colors shadow-[2px_0_5px_rgba(0,0,0,0.02)] w-[380px] min-w-[320px] max-w-[460px] ${
       isEditing 
         ? "bg-indigo-50" 
         : isLastUpdated 
         ? "bg-emerald-100" 
         : "bg-white group-hover:bg-slate-50/95 group-focus-within:bg-blue-50/95"
     }`}>
-      <p className="font-bold text-slate-900 truncate max-w-[150px] sm:max-w-[200px] md:max-w-xs lg:max-w-sm xl:max-w-md">{item.name}</p>
-      <p className="text-[10px] text-slate-400 font-bold uppercase">
+      <div className="flex items-center gap-2 flex-wrap">
+        {item.category && (
+          <span className="px-2 py-0.5 rounded text-[10px] font-black bg-indigo-100 text-indigo-700 tracking-wider shrink-0 border border-indigo-200/60 shadow-xs">
+            {item.category}
+          </span>
+        )}
+        <p className="font-bold text-slate-900 text-sm leading-snug break-words whitespace-normal">{item.name}</p>
+      </div>
+      <p className="text-[10px] text-slate-400 font-bold uppercase mt-1">
         UPDATED {item.updatedAt?.seconds ? new Date(item.updatedAt.seconds * 1000).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '27 JUL 2026'}
       </p>
     </td>
@@ -524,7 +534,14 @@ const MobileInventoryCard = React.memo(({
   >
     <div className="flex justify-between items-start gap-2">
       <div className="flex-1 border-r border-slate-100 pr-2">
-        <h4 className="font-black text-slate-900 text-base leading-tight uppercase truncate">{item.name}</h4>
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {item.category && (
+            <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-indigo-100 text-indigo-700 tracking-wider shrink-0 border border-indigo-200/50">
+              {item.category}
+            </span>
+          )}
+          <h4 className="font-black text-slate-900 text-base leading-tight uppercase break-words">{item.name}</h4>
+        </div>
         <div className="flex items-center gap-2 mt-2 flex-wrap animate-none">
           <InlinePriceInput key={`price-mobile-${item.id}`} value={item.price} onChange={(val) => handleSetPrice(item, val)} isLastUpdated={isLastUpdated} />
           <div className="inline-flex items-center gap-1.5">
@@ -683,22 +700,51 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({ items, setItems,
     }, 4000);
   }, []);
 
+  const [selectedCategory, setSelectedCategory] = React.useState<string>('all');
+
+  const categories = useMemo(() => {
+    const set = new Set<string>();
+    items.forEach(item => {
+      if (item.category && item.category.trim()) {
+        set.add(item.category.trim().toUpperCase());
+      }
+    });
+    return Array.from(set).sort();
+  }, [items]);
+
   const filteredItems = useMemo(() => {
     const normalizeSearchText = (value: string) => value.toLowerCase().replace(/[\s_-]+/g, '');
-    const searchQuery = normalizeSearchText(deferredSearchTerm.trim());
+    const rawSearch = deferredSearchTerm.trim().toLowerCase();
+    const searchQueryNormalized = normalizeSearchText(deferredSearchTerm.trim());
+    // Split into individual search words for flexible matching (e.g. "MK 12 CAM GEAR" or "MK 12")
+    const searchTokens = rawSearch.split(/\s+/).filter(Boolean);
 
     return items.filter(item => {
-      const nameNormalized = normalizeSearchText(item.name);
-      const matchesSearch = searchQuery === '' || nameNormalized.includes(searchQuery);
+      const nameRaw = (item.name || '').toLowerCase();
+      const catRaw = (item.category || '').toLowerCase();
+      const nameNormalized = normalizeSearchText(item.name || '');
+      const catNormalized = normalizeSearchText(item.category || '');
+      const combinedText = `${catRaw} ${nameRaw}`;
+      const combinedNormalized = `${catNormalized}${nameNormalized}`;
+
+      // Check if search matches either continuous normalized string OR all individual space-separated words
+      const matchesSearch = rawSearch === '' || 
+        combinedNormalized.includes(searchQueryNormalized) ||
+        searchTokens.every(token => combinedText.includes(token));
+
+      const matchesCategory = 
+        selectedCategory === 'all' || 
+        (item.category && item.category.toUpperCase().trim() === selectedCategory);
+
       const matchesLocation = 
         locationFilter === 'all' ||
         (locationFilter === 'upper' && (item.upperOfficeQty || 0) > 0) ||
         (locationFilter === 'down' && (item.downOfficeQty || 0) > 0) ||
         (locationFilter === 'nagdevi' && (item.nagdeviOfficeQty || 0) > 0);
 
-      return matchesSearch && matchesLocation;
+      return matchesSearch && matchesCategory && matchesLocation;
     });
-  }, [items, deferredSearchTerm, locationFilter]);
+  }, [items, deferredSearchTerm, locationFilter, selectedCategory]);
 
   const handleUpdateOfficeQty = useCallback(async (item: InventoryItem, office: 'upper' | 'down' | 'nagdevi', delta: number) => {
     const quantities = {
@@ -922,11 +968,12 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({ items, setItems,
     }
   };
 
-  const handleConfirmEdit = async ({ name, price, boxPacking }: { name: string; price: number; boxPacking: string }) => {
+  const handleConfirmEdit = async ({ name, price, boxPacking, category }: { name: string; price: number; boxPacking: string; category?: string }) => {
     if (editModal.item) {
       const origItem = editModal.item;
       const targetName = name.toUpperCase();
       const targetBoxPacking = boxPacking.toUpperCase().trim();
+      const targetCategory = category ? category.toUpperCase().trim() : '';
 
       // Fast synchronous optimistic update
       if (setItems) {
@@ -937,6 +984,7 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({ items, setItems,
             name: targetName,
             price: price,
             boxPacking: targetBoxPacking,
+            category: targetCategory,
             updatedAt: { seconds: Math.floor(Date.now() / 1000), nanoseconds: 0 } as any
           } : i)
         );
@@ -951,7 +999,12 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({ items, setItems,
       });
 
       try {
-        await inventoryService.updateItem(origItem, { name: targetName, price, boxPacking: targetBoxPacking });
+        await inventoryService.updateItem(origItem, { 
+          name: targetName, 
+          price, 
+          boxPacking: targetBoxPacking,
+          category: targetCategory 
+        });
       } catch (error) {
         // Revert UI if error occurs
         if (setItems) {
@@ -1105,6 +1158,8 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({ items, setItems,
     if (setItems) {
       setItems((prev) => prev.map(i => i.id === item.id ? {
         ...i,
+        price: purchase.unitPrice > 0 ? purchase.unitPrice : i.price,
+        boxPacking: purchase.boxPacking || i.boxPacking,
         upperOfficeQty: nextQty.upper,
         downOfficeQty: nextQty.down,
         nagdeviOfficeQty: nextQty.nagdevi,
@@ -1148,6 +1203,7 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({ items, setItems,
     name: string;
     price: number;
     boxPacking: string;
+    category?: string;
     upper: number;
     down: number;
     nagdevi: number;
@@ -1156,6 +1212,7 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({ items, setItems,
       const itemBelow = insertModal.itemBelow;
       const targetName = values.name.toUpperCase();
       const targetBoxPacking = values.boxPacking.toUpperCase().trim();
+      const targetCategory = values.category ? values.category.toUpperCase().trim() : undefined;
       const upper = values.upper;
       const down = values.down;
       const nagdevi = values.nagdevi;
@@ -1187,6 +1244,7 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({ items, setItems,
         downOfficeQty: down,
         nagdeviOfficeQty: nagdevi,
         boxPacking: targetBoxPacking || undefined,
+        category: targetCategory,
         ownerId: itemBelow.ownerId || '',
         createdAt: { seconds: Math.floor(Date.now() / 1000), nanoseconds: 0 } as any,
         updatedAt: { seconds: Math.floor(Date.now() / 1000), nanoseconds: 0 } as any,
@@ -1229,6 +1287,7 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({ items, setItems,
           downOfficeQty: down,
           nagdeviOfficeQty: nagdevi,
           boxPacking: targetBoxPacking || undefined,
+          category: targetCategory,
           orderIndex: calculatedOrderIndex
         }, items);
       } catch (error) {
@@ -1246,36 +1305,192 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({ items, setItems,
     }
   };
 
+  const [isBackingUp, setIsBackingUp] = React.useState(false);
+  const [isExporting, setIsExporting] = React.useState(false);
+
+  // 1. Export strictly in the exact UI sequence (filteredItems is already sorted by orderIndex / name)
+  const handleExportExcel = useCallback(() => {
+    try {
+      setIsExporting(true);
+      const rows = filteredItems.map((item, index) => ({
+        "Sr No": index + 1,
+        "Category / Model": item.category || "",
+        "Item Name": item.name,
+        "Price (₹)": item.price,
+        "Box Packing": item.boxPacking || "",
+        "Total Qty": item.quantity,
+        "Upper Office Qty": item.upperOfficeQty || 0,
+        "Down Office Qty": item.downOfficeQty || 0,
+        "Nagdevi Office Qty": item.nagdeviOfficeQty || 0,
+        "Last Updated": item.updatedAt?.seconds 
+          ? new Date(item.updatedAt.seconds * 1000).toLocaleDateString('en-GB') 
+          : "27/07/2026"
+      }));
+
+      const worksheet = XLSX.utils.json_to_sheet(rows);
+      worksheet['!cols'] = [
+        { wch: 8 },
+        { wch: 20 },
+        { wch: 35 },
+        { wch: 12 },
+        { wch: 16 },
+        { wch: 12 },
+        { wch: 16 },
+        { wch: 16 },
+        { wch: 16 },
+        { wch: 15 },
+      ];
+
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Stock Inventory');
+      const now = new Date().toISOString().split('T')[0];
+      XLSX.writeFile(workbook, `Vardhaman_Stock_${now}.xlsx`);
+
+      setStatusState({
+        isOpen: true,
+        type: 'success',
+        title: 'Excel Exported',
+        message: `Exported ${filteredItems.length} items in exact screen sequence.`
+      });
+    } catch (error) {
+      console.error('Excel export error:', error);
+      setStatusState({
+        isOpen: true,
+        type: 'error',
+        title: 'Export Failed',
+        message: 'Could not generate Excel file.'
+      });
+    } finally {
+      setIsExporting(false);
+    }
+  }, [filteredItems]);
+
+  // 2. Dual Backup: Download full JSON file AND clone to a new Firestore collection
+  const handleBackupData = useCallback(async () => {
+    try {
+      setIsBackingUp(true);
+      // a) Download full JSON file locally (Always works, unaffected by Firestore rules)
+      const jsonStats = await inventoryService.exportAllDataToJSON();
+      
+      // b) Attempt to clone to Firestore backup collection
+      let firestoreMessage = '';
+      try {
+        const firestoreStats = await inventoryService.backupAllDataToFirestoreCollection();
+        firestoreMessage = ` and ${firestoreStats.count} records cloned to Firestore collection '${firestoreStats.targetCollection}'`;
+      } catch (fsErr) {
+        console.warn('Firestore cloud backup collection write failed (likely rule restriction):', fsErr);
+        firestoreMessage = ` (Offline JSON backup file downloaded successfully).`;
+      }
+
+      setStatusState({
+        isOpen: true,
+        type: 'success',
+        title: 'Backup Successful',
+        message: `Backed up ${jsonStats.counts.inventory} items: Full database JSON file downloaded to your device${firestoreMessage}`
+      });
+    } catch (error) {
+      console.error('Backup error:', error);
+      setStatusState({
+        isOpen: true,
+        type: 'error',
+        title: 'Backup Failed',
+        message: 'Could not export database backup file.'
+      });
+    } finally {
+      setIsBackingUp(false);
+    }
+  }, []);
+
   return (
     <div className="space-y-6">
-      <div className="flex flex-col md:flex-row gap-4">
-        <div className="relative group flex-1">
-          <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-500 transition-colors" size={20} />
-          <input
-            type="text"
-            placeholder="Search items by name..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-12 pr-4 py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all shadow-sm font-medium uppercase"
-          />
-        </div>
-        
-        <div className="flex bg-white p-1 rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-          {(['all', 'upper', 'down', 'nagdevi'] as const).map((loc) => (
-            <button
-              key={loc}
-              onClick={() => onFilterChange(loc)}
-              className={`px-4 py-2 rounded-lg text-xs font-bold transition-all capitalize ${
-                locationFilter === loc 
-                  ? 'bg-blue-600 text-white shadow-md shadow-blue-200' 
-                  : 'text-slate-500 hover:bg-slate-50'
-              }`}
-            >
-              {loc === 'all' ? 'All Stock' : loc}
-            </button>
-          ))}
+      {/* Top Controls Toolbar */}
+      <div className="flex flex-col gap-3">
+        <div className="flex flex-col md:flex-row gap-3">
+          {/* Search Input with Category support */}
+          <div className="relative group flex-1">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-500 transition-colors" size={20} />
+            <input
+              type="text"
+              placeholder="Search by Item Name or Category (e.g. MK-12, VILLIERS)..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full pl-12 pr-4 py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all shadow-sm font-medium uppercase placeholder:normal-case"
+            />
+          </div>
+
+          {/* Category Dropdown Filter */}
+          {categories.length > 0 && (
+            <div className="flex items-center gap-2 bg-white px-3 py-2 rounded-xl border border-slate-200 shadow-sm shrink-0">
+              <Filter size={16} className="text-slate-400 shrink-0" />
+              <select
+                value={selectedCategory}
+                onChange={(e) => setSelectedCategory(e.target.value)}
+                className="bg-transparent text-xs font-black uppercase text-slate-700 outline-none cursor-pointer pr-2"
+              >
+                <option value="all">All Categories ({categories.length})</option>
+                {categories.map((cat) => (
+                  <option key={cat} value={cat}>
+                    {cat}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+          
+          {/* Location Tabs */}
+          <div className="flex bg-white p-1 rounded-xl border border-slate-200 shadow-sm overflow-hidden shrink-0">
+            {(['all', 'upper', 'down', 'nagdevi'] as const).map((loc) => (
+              <button
+                key={loc}
+                onClick={() => onFilterChange(loc)}
+                className={`px-3 py-2 rounded-lg text-xs font-bold transition-all capitalize ${
+                  locationFilter === loc 
+                    ? 'bg-blue-600 text-white shadow-md shadow-blue-200' 
+                    : 'text-slate-500 hover:bg-slate-50'
+                }`}
+              >
+                {loc === 'all' ? 'All Stock' : loc}
+              </button>
+            ))}
+          </div>
         </div>
 
+        {/* Secondary Toolbar: Counts + Action Buttons (Export to Excel & Dual Backup) */}
+        <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-50 p-2.5 rounded-xl border border-slate-200/80">
+          <div className="flex items-center gap-2 text-xs font-bold text-slate-600 px-1">
+            <span>Showing <strong className="text-slate-900">{filteredItems.length}</strong> of {items.length} items</span>
+            {selectedCategory !== 'all' && (
+              <span className="inline-flex items-center gap-1 bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-md text-[10px] font-black uppercase">
+                Category: {selectedCategory}
+                <button onClick={() => setSelectedCategory('all')} className="hover:text-indigo-900 ml-1">✕</button>
+              </span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            {/* Export to Excel (Sequence Guaranteed) */}
+            <button
+              onClick={handleExportExcel}
+              disabled={isExporting || filteredItems.length === 0}
+              className="inline-flex items-center gap-2 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black uppercase tracking-wider shadow-sm transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Export all items currently displayed in exact sequence to Excel"
+            >
+              {isExporting ? <Loader2 size={14} className="animate-spin" /> : <FileSpreadsheet size={14} />}
+              <span>Export Excel</span>
+            </button>
+
+            {/* Dual Backup Button (JSON File + Firestore Collection) */}
+            <button
+              onClick={handleBackupData}
+              disabled={isBackingUp}
+              className="inline-flex items-center gap-2 px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-black uppercase tracking-wider shadow-sm transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Download full JSON backup and clone database into a backup collection in Firestore"
+            >
+              {isBackingUp ? <Loader2 size={14} className="animate-spin" /> : <Database size={14} />}
+              <span>Backup Data</span>
+            </button>
+          </div>
+        </div>
       </div>
 
       {!isMobile ? (
@@ -1289,10 +1504,10 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({ items, setItems,
             </div>
           )}
           <div className="overflow-auto max-h-[calc(100vh-280px)] min-h-[350px] relative">
-            <table className="w-full text-left min-w-[980px] border-collapse table-fixed">
+            <table className="w-full text-left min-w-[1140px] border-collapse table-fixed">
               <thead className="bg-slate-50 text-left sticky top-0 z-30 shadow-[0_2px_4px_rgba(0,0,0,0.02)] border-b border-slate-200">
                 <tr>
-                  <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider sticky left-0 top-0 bg-slate-50 z-40 shadow-sm border-r border-slate-200 w-[220px]">Item Name</th>
+                  <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider sticky left-0 top-0 bg-slate-50 z-40 shadow-sm border-r border-slate-200 w-[380px] min-w-[320px]">Item Name</th>
                   <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider sticky top-0 bg-slate-50 z-30 shadow-sm w-[120px]">Price</th>
                   <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider sticky top-0 bg-slate-50 z-30 shadow-sm w-[140px]">Box Packing</th>
                   

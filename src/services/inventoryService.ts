@@ -10,12 +10,13 @@ import {
   deleteDoc, 
   doc, 
   getDocs,
+  setDoc,
   serverTimestamp,
   writeBatch,
   Timestamp
 } from 'firebase/firestore';
 import { db, auth, firebaseConfig } from '../lib/firebase';
-import { InventoryItem, NewInventoryItem, AuditLog, AuditAction, SaleRecord, PurchaseRecord, SaleLocation } from '../types';
+import { InventoryItem, NewInventoryItem, AuditLog, AuditAction, SaleRecord, PurchaseRecord, SaleLocation, ReconciliationReport } from '../types';
 
 enum OperationType {
   CREATE = 'create',
@@ -60,19 +61,56 @@ const projectCacheSuffix = (firebaseConfig.projectId || 'default-project').repla
 
 const getUserCacheKey = (baseKey: string, userId?: string) => `${baseKey}:${projectCacheSuffix}:${userId ?? 'anonymous'}`;
 
-const readLocalCache = <T>(_key: string): T[] => {
-  return [] as T[];
+const readLocalCache = <T>(key: string): T[] => {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return [] as T[];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    console.warn(`Failed to read local cache for ${key}:`, error);
+    return [] as T[];
+  }
 };
 
-const writeLocalCache = <T>(_key: string, _value: T[]) => {
-  // Temporary: disable local fallback cache to prevent stale data switching between datasets.
+const writeLocalCache = <T>(key: string, value: T[]) => {
+  try {
+    if (!value || value.length === 0) return;
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch (error) {
+    console.warn(`Failed to write local cache for ${key}:`, error);
+  }
+};
+
+let quotaExceededState = false;
+const quotaListeners = new Set<(isExceeded: boolean) => void>();
+
+export const getIsQuotaExceeded = () => quotaExceededState;
+
+export const subscribeToQuotaExceeded = (cb: (isExceeded: boolean) => void) => {
+  quotaListeners.add(cb);
+  cb(quotaExceededState);
+  return () => quotaListeners.delete(cb);
+};
+
+const setQuotaExceeded = (exceeded: boolean) => {
+  if (quotaExceededState !== exceeded) {
+    quotaExceededState = exceeded;
+    quotaListeners.forEach(cb => {
+      try { cb(exceeded); } catch (_) {}
+    });
+  }
 };
 
 const isQuotaExceededError = (error: unknown): boolean => {
   if (!error || typeof error !== 'object') return false;
   const maybeCode = (error as { code?: string }).code;
   const maybeMessage = (error as { message?: string }).message || '';
-  return maybeCode === 'resource-exhausted' || maybeCode === 'quota-exceeded' || maybeMessage.toLowerCase().includes('quota exceeded');
+  const isExceeded = maybeCode === 'resource-exhausted' || maybeCode === 'quota-exceeded' || maybeMessage.toLowerCase().includes('quota exceeded');
+  if (isExceeded) {
+    setQuotaExceeded(true);
+  }
+  return isExceeded;
 };
 
 const listenerRegistry = new Map<string, () => void>();
@@ -100,6 +138,8 @@ const logActivity = async (
   changes?: { before?: any, after?: any }
 ) => {
   if (!auth.currentUser) return;
+  const userEmail = auth.currentUser.email || '';
+  const userDisplay = auth.currentUser.displayName || (userEmail ? userEmail.split('@')[0].toUpperCase() : 'ADMIN');
   try {
     await addDoc(collection(db, AUDIT_COLLECTION), {
       action,
@@ -107,8 +147,8 @@ const logActivity = async (
       itemId: itemId || null,
       changes: changes || null,
       timestamp: serverTimestamp(),
-      performedBy: auth.currentUser.displayName || 'Anonymous',
-      performedByEmail: auth.currentUser.email || 'unknown',
+      performedBy: userDisplay,
+      performedByEmail: userEmail,
       ownerId: auth.currentUser.uid // For security rules / filtering
     });
   } catch (error) {
@@ -121,10 +161,6 @@ export const inventoryService = {
     if (!auth.currentUser) return () => {};
 
     const inventoryCacheKey = getUserCacheKey(INVENTORY_CACHE_KEY, auth.currentUser.uid);
-    const cachedItems = readLocalCache<InventoryItem>(inventoryCacheKey);
-    if (cachedItems.length > 0) {
-      callback(cachedItems);
-    }
 
     const q = query(
       collection(db, COLLECTION_PATH)
@@ -157,7 +193,10 @@ export const inventoryService = {
     }, (error) => {
       if (isQuotaExceededError(error)) {
         console.warn('Inventory listener quota exceeded, using local cache only:', error);
-        callback(readLocalCache<InventoryItem>(inventoryCacheKey));
+        const cached = readLocalCache<InventoryItem>(inventoryCacheKey);
+        if (cached.length > 0) {
+          callback(cached);
+        }
         const current = listenerRegistry.get(key);
         if (current) {
           current();
@@ -166,7 +205,10 @@ export const inventoryService = {
         return;
       }
       console.warn('Inventory listener error, using local cache:', error);
-      callback(readLocalCache<InventoryItem>(inventoryCacheKey));
+      const cached = readLocalCache<InventoryItem>(inventoryCacheKey);
+      if (cached.length > 0) {
+        callback(cached);
+      }
     }), () => readLocalCache<InventoryItem>(inventoryCacheKey));
   },
 
@@ -326,10 +368,6 @@ export const inventoryService = {
     if (!auth.currentUser) return () => {};
 
     const salesCacheKey = getUserCacheKey(SALES_CACHE_KEY, auth.currentUser.uid);
-    const cachedSales = readLocalCache<SaleRecord>(salesCacheKey);
-    if (cachedSales.length > 0) {
-      callback(cachedSales);
-    }
 
     const q = query(
       collection(db, SALES_COLLECTION),
@@ -347,7 +385,10 @@ export const inventoryService = {
     }, (error) => {
       if (isQuotaExceededError(error)) {
         console.warn('Sales listener quota exceeded, using local cache only:', error);
-        callback(readLocalCache<SaleRecord>(salesCacheKey));
+        const cached = readLocalCache<SaleRecord>(salesCacheKey);
+        if (cached.length > 0) {
+          callback(cached);
+        }
         const current = listenerRegistry.get(key);
         if (current) {
           current();
@@ -356,7 +397,10 @@ export const inventoryService = {
         return;
       }
       console.warn('Sales listener error, using local cache:', error);
-      callback(readLocalCache<SaleRecord>(salesCacheKey));
+      const cached = readLocalCache<SaleRecord>(salesCacheKey);
+      if (cached.length > 0) {
+        callback(cached);
+      }
     }), () => readLocalCache<SaleRecord>(salesCacheKey));
   },
 
@@ -521,10 +565,6 @@ export const inventoryService = {
     if (!auth.currentUser) return () => {};
 
     const purchasesCacheKey = getUserCacheKey(PURCHASES_CACHE_KEY, auth.currentUser.uid);
-    const cachedPurchases = readLocalCache<PurchaseRecord>(purchasesCacheKey);
-    if (cachedPurchases.length > 0) {
-      callback(cachedPurchases);
-    }
 
     const q = query(
       collection(db, PURCHASES_COLLECTION),
@@ -542,7 +582,10 @@ export const inventoryService = {
     }, (error) => {
       if (isQuotaExceededError(error)) {
         console.warn('Purchases listener quota exceeded, using local cache only:', error);
-        callback(readLocalCache<PurchaseRecord>(purchasesCacheKey));
+        const cached = readLocalCache<PurchaseRecord>(purchasesCacheKey);
+        if (cached.length > 0) {
+          callback(cached);
+        }
         const current = listenerRegistry.get(key);
         if (current) {
           current();
@@ -551,7 +594,10 @@ export const inventoryService = {
         return;
       }
       console.warn('Purchases listener error, using local cache:', error);
-      callback(readLocalCache<PurchaseRecord>(purchasesCacheKey));
+      const cached = readLocalCache<PurchaseRecord>(purchasesCacheKey);
+      if (cached.length > 0) {
+        callback(cached);
+      }
     }), () => readLocalCache<PurchaseRecord>(purchasesCacheKey));
   },
 
@@ -599,6 +645,8 @@ export const inventoryService = {
       ownerId: auth.currentUser.uid,
     };
 
+    const newPrice = Number(purchase.unitPrice) || 0;
+
     try {
       const purchaseRef = await addDoc(collection(db, PURCHASES_COLLECTION), {
         ...purchaseData,
@@ -606,13 +654,21 @@ export const inventoryService = {
         ownerId: auth.currentUser.uid,
       });
 
-      await updateDoc(doc(db, COLLECTION_PATH, item.id), {
+      const updatePayload: any = {
         upperOfficeQty: updatedQuantities.upper,
         downOfficeQty: updatedQuantities.down,
         nagdeviOfficeQty: updatedQuantities.nagdevi,
         quantity: totalQuantity,
         updatedAt: serverTimestamp(),
-      });
+      };
+      if (newPrice > 0) {
+        updatePayload.price = newPrice;
+      }
+      if (targetBoxPacking) {
+        updatePayload.boxPacking = targetBoxPacking;
+      }
+
+      await updateDoc(doc(db, COLLECTION_PATH, item.id), updatePayload);
 
       const purchaseRecord: PurchaseRecord = {
         ...purchaseData,
@@ -624,12 +680,14 @@ export const inventoryService = {
 
       logActivity('PURCHASE', item.name, item.id, {
         before: {
+          price: item.price,
           total: item.quantity,
           upper: item.upperOfficeQty,
           down: item.downOfficeQty,
           nagdevi: item.nagdeviOfficeQty,
         },
         after: {
+          price: newPrice > 0 ? newPrice : item.price,
           total: totalQuantity,
           upper: updatedQuantities.upper,
           down: updatedQuantities.down,
@@ -659,6 +717,8 @@ export const inventoryService = {
       const itemIndex = cachedItems.findIndex(existing => existing.id === item.id);
       if (itemIndex >= 0) {
         const updatedItem = { ...cachedItems[itemIndex] };
+        if (newPrice > 0) updatedItem.price = newPrice;
+        if (targetBoxPacking) updatedItem.boxPacking = targetBoxPacking;
         if (purchase.location === 'upper') updatedItem.upperOfficeQty = (updatedItem.upperOfficeQty || 0) + quantity;
         if (purchase.location === 'down') updatedItem.downOfficeQty = (updatedItem.downOfficeQty || 0) + quantity;
         if (purchase.location === 'nagdevi') updatedItem.nagdeviOfficeQty = (updatedItem.nagdeviOfficeQty || 0) + quantity;
@@ -837,7 +897,169 @@ export const inventoryService = {
     }
   },
 
-  fetchAuditLogsOnce: async (startDate?: Date, endDate?: Date): Promise<AuditLog[]> => {
+  // 1. Full database export to a downloadable JSON file
+  exportAllDataToJSON: async () => {
+    try {
+      const [inventorySnap, salesSnap, purchasesSnap, auditSnap] = await Promise.all([
+        getDocs(collection(db, COLLECTION_PATH)),
+        getDocs(collection(db, SALES_COLLECTION)),
+        getDocs(collection(db, PURCHASES_COLLECTION)),
+        getDocs(collection(db, AUDIT_COLLECTION)),
+      ]);
+
+      const backupData = {
+        exportedAt: new Date().toISOString(),
+        projectId: firebaseConfig.projectId,
+        counts: {
+          inventory: inventorySnap.size,
+          sales: salesSnap.size,
+          purchases: purchasesSnap.size,
+          audit_logs: auditSnap.size,
+        },
+        inventory: inventorySnap.docs.map(d => ({ ...d.data(), id: d.id })),
+        sales: salesSnap.docs.map(d => ({ ...d.data(), id: d.id })),
+        purchases: purchasesSnap.docs.map(d => ({ ...d.data(), id: d.id })),
+        audit_logs: auditSnap.docs.map(d => ({ ...d.data(), id: d.id })),
+      };
+
+      const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      const dateStr = new Date().toISOString().slice(0, 10);
+      link.href = url;
+      link.download = `vardhaman_stock_backup_${dateStr}_${Date.now()}.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+      return backupData;
+    } catch (error) {
+      console.error('Failed to export full database backup:', error);
+      throw error;
+    }
+  },
+
+  // 2. Clone all documents to a secure backup collection inside Firestore (e.g. inventory_backup_YYYYMMDD)
+  backupAllDataToFirestoreCollection: async () => {
+    if (!auth.currentUser) throw new Error('Not authenticated');
+    try {
+      const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '_');
+      const backupCollectionName = `inventory_backup_${dateStr}`;
+
+      const snapshot = await getDocs(collection(db, COLLECTION_PATH));
+      if (snapshot.empty) return { count: 0, targetCollection: backupCollectionName };
+
+      const batches = [];
+      let currentBatch = writeBatch(db);
+      let count = 0;
+
+      for (const docSnap of snapshot.docs) {
+        const targetRef = doc(db, backupCollectionName, docSnap.id);
+        currentBatch.set(targetRef, {
+          ...docSnap.data(),
+          _backedUpAt: serverTimestamp(),
+          _originalId: docSnap.id,
+        });
+        count++;
+
+        if (count % 400 === 0) {
+          batches.push(currentBatch.commit());
+          currentBatch = writeBatch(db);
+        }
+      }
+
+      batches.push(currentBatch.commit());
+      await Promise.all(batches);
+
+      await logActivity('BATCH_IMPORT', `Backup Created (${backupCollectionName})`, undefined, {
+        after: `Saved ${count} items to Firestore collection ${backupCollectionName}`
+      });
+
+      return { count, targetCollection: backupCollectionName };
+    } catch (error) {
+      console.error('Failed to clone database to Firestore backup collection:', error);
+      throw error;
+    }
+  },
+
+  // 3. Reconcile Live Inventory against a Baseline Snapshot (or uploaded list)
+  reconcileInventory: (
+    beforeItems: Array<{ name: string; quantity?: number; price?: number }>,
+    afterItems: Array<{ name: string; quantity?: number; price?: number }>
+  ): ReconciliationReport => {
+    const beforeMap = new Map<string, { qty: number; price: number }>();
+    let beforeTotalQty = 0;
+    beforeItems.forEach(item => {
+      const cleanName = String(item.name || '').trim().toUpperCase();
+      const qty = Number(item.quantity) || 0;
+      const price = Number(item.price) || 0;
+      beforeMap.set(cleanName, { qty, price });
+      beforeTotalQty += qty;
+    });
+
+    const afterMap = new Map<string, { qty: number; price: number }>();
+    let afterTotalQty = 0;
+    afterItems.forEach(item => {
+      const cleanName = String(item.name || '').trim().toUpperCase();
+      const qty = Number(item.quantity) || 0;
+      const price = Number(item.price) || 0;
+      afterMap.set(cleanName, { qty, price });
+      afterTotalQty += qty;
+    });
+
+    let exactMatchesCount = 0;
+    const newItems: string[] = [];
+    const missingItems: string[] = [];
+    const changedItems: Array<{
+      name: string;
+      beforeQty: number;
+      afterQty: number;
+      beforePrice: number;
+      afterPrice: number;
+    }> = [];
+
+    // Check all afterItems
+    afterMap.forEach((afterVal, name) => {
+      if (!beforeMap.has(name)) {
+        newItems.push(name);
+      } else {
+        const beforeVal = beforeMap.get(name)!;
+        if (beforeVal.qty === afterVal.qty && beforeVal.price === afterVal.price) {
+          exactMatchesCount++;
+        } else {
+          changedItems.push({
+            name,
+            beforeQty: beforeVal.qty,
+            afterQty: afterVal.qty,
+            beforePrice: beforeVal.price,
+            afterPrice: afterVal.price,
+          });
+        }
+      }
+    });
+
+    // Check for items missing in afterItems
+    beforeMap.forEach((_, name) => {
+      if (!afterMap.has(name)) {
+        missingItems.push(name);
+      }
+    });
+
+    return {
+      timestamp: new Date().toISOString(),
+      beforeCount: beforeItems.length,
+      afterCount: afterItems.length,
+      beforeTotalQty,
+      afterTotalQty,
+      exactMatchesCount,
+      newItems,
+      missingItems,
+      changedItems,
+    };
+  },
+
+  fetchAuditLogsOnce: async (startDate?: Date, endDate?: Date, limitCount: number = 500): Promise<AuditLog[]> => {
     if (!auth.currentUser) return [];
 
     const auditCacheKey = getUserCacheKey(AUDIT_CACHE_KEY, auth.currentUser.uid);
@@ -847,7 +1069,7 @@ export const inventoryService = {
       let q = query(
         collection(db, AUDIT_COLLECTION),
         orderBy('timestamp', 'desc'),
-        limit(200)
+        limit(limitCount)
       );
 
       if (startDate) {
@@ -875,7 +1097,7 @@ export const inventoryService = {
     }
   },
 
-  subscribeToAuditLogs: (callback: (logs: AuditLog[]) => void, startDate?: Date, endDate?: Date) => {
+  subscribeToAuditLogs: (callback: (logs: AuditLog[]) => void, startDate?: Date, endDate?: Date, limitCount: number = 500) => {
     if (!auth.currentUser) return () => {};
 
     const auditCacheKey = getUserCacheKey(AUDIT_CACHE_KEY, auth.currentUser.uid);
@@ -883,7 +1105,7 @@ export const inventoryService = {
     let q = query(
       collection(db, AUDIT_COLLECTION),
       orderBy('timestamp', 'desc'),
-      limit(200)
+      limit(limitCount)
     );
 
     if (startDate) {
@@ -910,7 +1132,10 @@ export const inventoryService = {
     }, (error) => {
       if (isQuotaExceededError(error)) {
         console.warn('Audit log listener quota exceeded, using local cache only:', error);
-        callback(readLocalCache<AuditLog>(auditCacheKey));
+        const cached = readLocalCache<AuditLog>(auditCacheKey);
+        if (cached.length > 0) {
+          callback(cached);
+        }
         const current = listenerRegistry.get(key);
         if (current) {
           current();
@@ -919,7 +1144,10 @@ export const inventoryService = {
         return;
       }
       console.warn('Audit log listener error, using local cache:', error);
-      callback(readLocalCache<AuditLog>(auditCacheKey));
+      const cached = readLocalCache<AuditLog>(auditCacheKey);
+      if (cached.length > 0) {
+        callback(cached);
+      }
     }), () => readLocalCache<AuditLog>(auditCacheKey));
   },
 
@@ -1022,7 +1250,7 @@ export const inventoryService = {
     }
   },
 
-  updateItem: async (item: InventoryItem, updates: { name: string, price: number, boxPacking?: string }) => {
+  updateItem: async (item: InventoryItem, updates: { name: string, price: number, boxPacking?: string, category?: string }) => {
     if (!auth.currentUser) throw new Error('User not authenticated');
 
     const inventoryCacheKey = getUserCacheKey(INVENTORY_CACHE_KEY, auth.currentUser.uid);
@@ -1054,13 +1282,14 @@ export const inventoryService = {
           name: updates.name,
           price: updates.price,
           boxPacking: updates.boxPacking ?? item.boxPacking ?? '',
+          category: updates.category ?? item.category ?? '',
           updatedAt: { seconds: Math.floor(Date.now() / 1000), nanoseconds: 0 },
         };
         writeLocalCache(inventoryCacheKey, cachedItems);
       }
 
       logActivity('UPDATE', item.name, item.id, {
-        before: { name: item.name, price: item.price, boxPacking: item.boxPacking || '' },
+        before: { name: item.name, price: item.price, boxPacking: item.boxPacking || '', category: item.category || '' },
         after: updates
       });
     } catch (error) {
@@ -1073,6 +1302,7 @@ export const inventoryService = {
           name: updates.name,
           price: updates.price,
           boxPacking: updates.boxPacking ?? item.boxPacking ?? '',
+          category: updates.category ?? item.category ?? '',
           updatedAt: { seconds: Math.floor(Date.now() / 1000), nanoseconds: 0 },
         };
         writeLocalCache(inventoryCacheKey, cachedItems);
@@ -1188,7 +1418,7 @@ export const inventoryService = {
     }
   },
 
-  deleteAllItems: async () => {
+  deleteAllItems: async (onProgress?: (deleted: number, total: number) => void) => {
     if (!auth.currentUser) throw new Error('User not authenticated');
     
     try {
@@ -1197,7 +1427,10 @@ export const inventoryService = {
       );
       
       const snapshot = await getDocs(q);
-      const batches = [];
+      if (snapshot.empty) return;
+
+      const total = snapshot.size;
+      const batches: any[] = [];
       let currentBatch = writeBatch(db);
       let count = 0;
 
@@ -1205,49 +1438,101 @@ export const inventoryService = {
         currentBatch.delete(doc.ref);
         count++;
         if (count === 500) {
-          batches.push(currentBatch.commit());
+          batches.push(currentBatch);
           currentBatch = writeBatch(db);
           count = 0;
         }
       }
       
       if (count > 0) {
-        batches.push(currentBatch.commit());
+        batches.push(currentBatch);
       }
       
-      await Promise.all(batches);
+      // Execute batches sequentially with main thread yield to prevent browser UI freeze
+      let deletedCount = 0;
+      for (let i = 0; i < batches.length; i++) {
+        await batches[i].commit();
+        deletedCount = Math.min((i + 1) * 500, total);
+        if (onProgress) {
+          onProgress(deletedCount, total);
+        }
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+
       await logActivity('BATCH_DELETE', 'ALL ITEMS', undefined, { before: `${snapshot.size} items removed` });
+      try {
+        localStorage.removeItem(getUserCacheKey(INVENTORY_CACHE_KEY, auth.currentUser.uid));
+      } catch (_) {}
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, COLLECTION_PATH);
     }
   },
 
-  importItems: async (items: Omit<NewInventoryItem, 'ownerId' | 'updatedAt' | 'orderIndex'>[]) => {
+  importItems: async (
+    items: (Omit<NewInventoryItem, 'ownerId' | 'updatedAt' | 'orderIndex'> & { updatedAt?: any; createdAt?: any; orderIndex?: number })[],
+    onProgress?: (current: number, total: number) => void
+  ) => {
     if (!auth.currentUser) throw new Error('User not authenticated');
     
     try {
-      const batches = [];
-      const now = Date.now();
-      for (let i = 0; i < items.length; i += 500) {
+      // 1. Fetch current existing items to preserve their exact original 'updatedAt' and 'createdAt' timestamps if matching
+      const existingSnap = await getDocs(collection(db, COLLECTION_PATH));
+      const existingDatesMap = new Map<string, { updatedAt: any; createdAt: any }>();
+      existingSnap.docs.forEach(d => {
+        const data = d.data();
+        if (data.name) {
+          existingDatesMap.set(String(data.name).trim().toUpperCase(), {
+            updatedAt: data.updatedAt,
+            createdAt: data.createdAt,
+          });
+        }
+      });
+
+      const totalItems = items.length;
+      // 2. Commit in chunks of 500 sequentially to keep browser thread completely responsive
+      for (let i = 0; i < totalItems; i += 500) {
         const chunk = items.slice(i, i + 500);
         const batch = writeBatch(db);
         
         chunk.forEach((item, indexWithinChunk) => {
           const globalIndex = i + indexWithinChunk;
           const docRef = doc(collection(db, COLLECTION_PATH));
-          batch.set(docRef, {
-            ...item,
+          const cleanName = String(item.name || '').trim().toUpperCase();
+          const existingDates = existingDatesMap.get(cleanName);
+
+          const rawItem: any = {
+            name: cleanName,
+            price: Number(item.price) || 0,
+            quantity: Number(item.quantity) || 0,
+            upperOfficeQty: Number(item.upperOfficeQty) || 0,
+            downOfficeQty: Number(item.downOfficeQty) || 0,
+            nagdeviOfficeQty: Number(item.nagdeviOfficeQty) || 0,
             ownerId: auth.currentUser!.uid,
-            updatedAt: serverTimestamp(),
-            createdAt: serverTimestamp(),
-            orderIndex: now + globalIndex,
-          });
+            // Preserve exact row sequence order from spreadsheet
+            orderIndex: item.orderIndex !== undefined ? item.orderIndex : (globalIndex + 1) * 100,
+            // Preserve explicit updatedAt from file (or existing doc date or server timestamp)
+            updatedAt: item.updatedAt || existingDates?.updatedAt || serverTimestamp(),
+            createdAt: item.createdAt || existingDates?.createdAt || serverTimestamp(),
+          };
+
+          if (item.boxPacking && String(item.boxPacking).trim()) {
+            rawItem.boxPacking = String(item.boxPacking).trim().toUpperCase();
+          }
+          if (item.category && String(item.category).trim()) {
+            rawItem.category = String(item.category).trim().toUpperCase();
+          }
+
+          batch.set(docRef, rawItem);
         });
         
-        batches.push(batch.commit());
+        await batch.commit();
+        if (onProgress) {
+          onProgress(Math.min(i + 500, totalItems), totalItems);
+        }
+        // Yield to browser event loop
+        await new Promise(resolve => setTimeout(resolve, 60));
       }
       
-      await Promise.all(batches);
       await logActivity('BATCH_IMPORT', 'IMPORT SESSION', undefined, { after: `${items.length} items imported` });
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, COLLECTION_PATH);

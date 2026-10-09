@@ -1,10 +1,68 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: inventory/{itemId}
+    // Fields:
+    //   - name: string (1..200 chars)
+    //   - price: number (>= 0)
+    //   - quantity: number (>= 0)
+    //   - upperOfficeQty: number (>= 0)
+    //   - downOfficeQty: number (>= 0)
+    //   - nagdeviOfficeQty: number (>= 0)
+    //   - updatedAt: timestamp
+    //   - createdAt: timestamp (immutable on update)
+    //   - boxPacking: optional string (<= 100 chars)
+    //   - category: optional string (<= 100 chars)
+    //   - ownerId: optional string (<= 100 chars)
+    //   - orderIndex: optional number
+    //
+    // Collection: {backupCollection}/{docId}
+    // Matching patterns: inventory_backup_*, backup_inventory*, inventory_*_backup*
+    // Snapshot copies of inventory items with optional backup metadata:
+    //   - All fields from inventory item
+    //   - _backedUpAt: optional timestamp
+    //   - _originalId: optional string (<= 100 chars)
+    //
+    // Collection: sales/{saleId}
+    // Fields:
+    //   - itemId, itemName, customerName, companyName, location: string
+    //   - quantity: number (> 0)
+    //   - unitPrice, totalAmount: number (>= 0)
+    //   - soldAt: timestamp
+    //   - notes: optional string (<= 1000 chars)
+    //   - ownerId: optional string (<= 100 chars)
+    //
+    // Collection: purchases/{purchaseId}
+    // Fields:
+    //   - itemId, itemName, supplierName, location: string
+    //   - quantity: number (> 0)
+    //   - unitPrice, totalAmount: number (>= 0)
+    //   - purchasedAt: timestamp
+    //   - notes: optional string (<= 1000 chars)
+    //   - boxPacking: optional string (<= 100 chars)
+    //   - ownerId: optional string (<= 100 chars)
+    //
+    // Collection: audit_logs/{logId}
+    // Append-only tamper-evident audit ledger
+    // ===============================================================
+
+    // Helper Functions
     function isSignedIn() {
       return request.auth != null;
     }
 
+    function isBackupCollection(name) {
+      return name.matches('^inventory_backup.*') ||
+             name.matches('^backup_inventory.*') ||
+             name.matches('^inventory_.*_backup.*');
+    }
+
+    // Domain Validators
     function isValidInventoryItem(data, isUpdate) {
       return data.name is string && data.name.size() > 0 && data.name.size() <= 200 &&
              data.price is number && data.price >= 0 &&
@@ -12,10 +70,68 @@ service cloud.firestore {
              data.upperOfficeQty is number && data.upperOfficeQty >= 0 &&
              data.downOfficeQty is number && data.downOfficeQty >= 0 &&
              data.nagdeviOfficeQty is number && data.nagdeviOfficeQty >= 0 &&
-             data.updatedAt == request.time &&
-             (isUpdate ? data.createdAt == resource.data.createdAt : data.createdAt == request.time);
+             (data.updatedAt == request.time || data.updatedAt is timestamp) &&
+             (isUpdate ? (!('createdAt' in resource.data) || data.createdAt == resource.data.createdAt) : (data.createdAt == request.time || data.createdAt is timestamp)) &&
+             (!('category' in data) || (data.category is string && data.category.size() <= 100)) &&
+             (!('boxPacking' in data) || (data.boxPacking is string && data.boxPacking.size() <= 100)) &&
+             (!('ownerId' in data) || (data.ownerId is string && data.ownerId.size() <= 100)) &&
+             (!('orderIndex' in data) || data.orderIndex is number);
     }
 
+    function isValidBackupItem(data) {
+      return data.name is string && data.name.size() > 0 && data.name.size() <= 200 &&
+             data.price is number && data.price >= 0 &&
+             data.quantity is number && data.quantity >= 0 &&
+             (!('upperOfficeQty' in data) || (data.upperOfficeQty is number && data.upperOfficeQty >= 0)) &&
+             (!('downOfficeQty' in data) || (data.downOfficeQty is number && data.downOfficeQty >= 0)) &&
+             (!('nagdeviOfficeQty' in data) || (data.nagdeviOfficeQty is number && data.nagdeviOfficeQty >= 0)) &&
+             (!('category' in data) || (data.category is string && data.category.size() <= 100)) &&
+             (!('boxPacking' in data) || (data.boxPacking is string && data.boxPacking.size() <= 100)) &&
+             (!('ownerId' in data) || (data.ownerId is string && data.ownerId.size() <= 100)) &&
+             (!('orderIndex' in data) || data.orderIndex is number) &&
+             (!('_backedUpAt' in data) || (data._backedUpAt == request.time || data._backedUpAt is timestamp)) &&
+             (!('_originalId' in data) || (data._originalId is string && data._originalId.size() <= 100)) &&
+             (!('updatedAt' in data) || data.updatedAt is timestamp) &&
+             (!('createdAt' in data) || data.createdAt is timestamp);
+    }
+
+    function isValidSaleRecord(data) {
+      return data.itemId is string && data.itemId.size() <= 100 &&
+             data.itemName is string && data.itemName.size() > 0 && data.itemName.size() <= 200 &&
+             data.customerName is string && data.customerName.size() <= 200 &&
+             data.companyName is string && data.companyName.size() <= 200 &&
+             data.quantity is number && data.quantity > 0 &&
+             data.unitPrice is number && data.unitPrice >= 0 &&
+             data.totalAmount is number && data.totalAmount >= 0 &&
+             data.location is string && data.location.size() <= 50 &&
+             data.soldAt is timestamp &&
+             (!('notes' in data) || (data.notes is string && data.notes.size() <= 1000)) &&
+             (!('ownerId' in data) || (data.ownerId is string && data.ownerId.size() <= 100));
+    }
+
+    function isValidPurchaseRecord(data) {
+      return data.itemId is string && data.itemId.size() <= 100 &&
+             data.itemName is string && data.itemName.size() > 0 && data.itemName.size() <= 200 &&
+             data.supplierName is string && data.supplierName.size() <= 200 &&
+             data.quantity is number && data.quantity > 0 &&
+             data.unitPrice is number && data.unitPrice >= 0 &&
+             data.totalAmount is number && data.totalAmount >= 0 &&
+             data.location is string && data.location.size() <= 50 &&
+             data.purchasedAt is timestamp &&
+             (!('notes' in data) || (data.notes is string && data.notes.size() <= 1000)) &&
+             (!('boxPacking' in data) || (data.boxPacking is string && data.boxPacking.size() <= 100)) &&
+             (!('ownerId' in data) || (data.ownerId is string && data.ownerId.size() <= 100));
+    }
+
+    function isValidAuditLog(data) {
+      return data.action is string && data.action.size() <= 50 &&
+             data.itemName is string && data.itemName.size() <= 200 &&
+             data.timestamp == request.time &&
+             data.performedBy is string && data.performedBy.size() <= 100 &&
+             data.performedByEmail is string && data.performedByEmail.size() <= 200;
+    }
+
+    // 1. Inventory Collection
     match /inventory/{itemId} {
       allow create: if isSignedIn() && isValidInventoryItem(request.resource.data, false);
       allow get, list: if isSignedIn();
@@ -23,54 +139,31 @@ service cloud.firestore {
       allow delete: if isSignedIn();
     }
 
-    function isValidSaleRecord(data) {
-      return data.itemId is string &&
-             data.itemName is string &&
-             data.customerName is string &&
-             data.companyName is string &&
-             data.quantity is number && data.quantity > 0 &&
-             data.unitPrice is number && data.unitPrice >= 0 &&
-             data.totalAmount is number && data.totalAmount >= 0 &&
-             data.location is string &&
-             data.soldAt is timestamp &&
-             data.notes is string;
+    // 2. Backup Collections (e.g. inventory_backup_2026_10_09, backup_inventory, etc.)
+    match /{backupCollection}/{docId} {
+      allow get, list: if isSignedIn() && isBackupCollection(backupCollection);
+      allow create, update: if isSignedIn() && isBackupCollection(backupCollection) && isValidBackupItem(request.resource.data);
+      allow delete: if isSignedIn() && isBackupCollection(backupCollection);
     }
 
+    // 3. Sales Collection
     match /sales/{saleId} {
       allow create: if isSignedIn() && isValidSaleRecord(request.resource.data);
       allow get, list: if isSignedIn();
       allow update, delete: if isSignedIn();
     }
 
-    function isValidPurchaseRecord(data) {
-      return data.itemId is string &&
-             data.itemName is string &&
-             data.supplierName is string &&
-             data.quantity is number && data.quantity > 0 &&
-             data.unitPrice is number && data.unitPrice >= 0 &&
-             data.totalAmount is number && data.totalAmount >= 0 &&
-             data.location is string &&
-             data.purchasedAt is timestamp &&
-             data.notes is string;
-    }
-
+    // 4. Purchases Collection
     match /purchases/{purchaseId} {
       allow create: if isSignedIn() && isValidPurchaseRecord(request.resource.data);
       allow get, list: if isSignedIn();
       allow update, delete: if isSignedIn();
     }
 
-    function isValidAuditLog(data) {
-      return data.action is string &&
-             data.itemName is string && data.itemName.size() <= 200 &&
-             data.timestamp == request.time &&
-             data.performedBy is string &&
-             data.performedByEmail is string;
-    }
-
+    // 5. Audit Logs Collection (Append-only ledger)
     match /audit_logs/{logId} {
       allow create: if isSignedIn() && isValidAuditLog(request.resource.data);
-      allow list: if isSignedIn();
+      allow get, list: if isSignedIn();
       allow update, delete: if false;
     }
   }
