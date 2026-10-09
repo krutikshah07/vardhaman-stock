@@ -87,7 +87,7 @@ let quotaExceededState = false;
 const quotaListeners = new Set<(isExceeded: boolean) => void>();
 
 export type DatabaseProvider = 'firestore' | 'supabase';
-let currentDbProvider: DatabaseProvider = 'firestore';
+let currentDbProvider: DatabaseProvider = 'supabase';
 const providerListeners = new Set<(provider: DatabaseProvider) => void>();
 
 export const getActiveDatabaseProvider = () => currentDbProvider;
@@ -160,88 +160,94 @@ const logActivity = async (
   itemId?: string, 
   changes?: { before?: any, after?: any }
 ) => {
-  if (!auth.currentUser) return;
-  const userEmail = auth.currentUser.email || '';
-  const userDisplay = auth.currentUser.displayName || (userEmail ? userEmail.split('@')[0].toUpperCase() : 'ADMIN');
+  const userEmail = auth.currentUser?.email || '';
+  const userDisplay = auth.currentUser?.displayName || (userEmail ? userEmail.split('@')[0].toUpperCase() : 'ADMIN');
+  
+  // 1. Log to Supabase audit_logs
   try {
-    await addDoc(collection(db, AUDIT_COLLECTION), {
-      action,
-      itemName,
+    await supabaseService.logAudit({
       itemId: itemId || null,
+      itemName,
+      action,
       changes: changes || null,
-      timestamp: serverTimestamp(),
       performedBy: userDisplay,
       performedByEmail: userEmail,
-      ownerId: auth.currentUser.uid // For security rules / filtering
     });
-  } catch (error) {
-    console.warn('Failed to log audit activity:', error);
+  } catch (err) {
+    console.warn('Supabase audit log error:', err);
+  }
+
+  // 2. Also log to Firestore audit_logs if authenticated
+  if (auth.currentUser) {
+    try {
+      await addDoc(collection(db, AUDIT_COLLECTION), {
+        action,
+        itemName,
+        itemId: itemId || null,
+        changes: changes || null,
+        timestamp: serverTimestamp(),
+        performedBy: userDisplay,
+        performedByEmail: userEmail,
+        ownerId: auth.currentUser.uid
+      });
+    } catch (error) {
+      console.warn('Firestore audit activity log skipped/failed:', error);
+    }
   }
 };
 
 export const inventoryService = {
+  // PRIMARY: Subscribe to Supabase with Realtime updates (UNLIMITED READS)
+  // Fallback: Local Cache & Firestore if Supabase unavailable
   subscribeToInventory: (callback: (items: InventoryItem[]) => void) => {
-    if (!auth.currentUser) return () => {};
+    const inventoryCacheKey = getUserCacheKey(INVENTORY_CACHE_KEY, auth.currentUser?.uid || 'default');
 
-    const inventoryCacheKey = getUserCacheKey(INVENTORY_CACHE_KEY, auth.currentUser.uid);
+    // 1. Immediately emit cached data if available for instant UI render
+    const cached = readLocalCache<InventoryItem>(inventoryCacheKey);
+    if (cached.length > 0) {
+      callback(cached);
+    }
 
-    const q = query(
-      collection(db, COLLECTION_PATH)
-    );
+    setDatabaseProvider('supabase');
 
-    const key = `inventory:${auth.currentUser.uid}`;
-    return ensureSingleListener(key, () => onSnapshot(q, (snapshot) => {
-      const items = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as InventoryItem[];
-
-      items.sort((a, b) => {
-        const orderA = a.orderIndex !== undefined ? a.orderIndex : 0;
-        const orderB = b.orderIndex !== undefined ? b.orderIndex : 0;
-        if (orderA !== orderB) return orderA - orderB;
-
-        const nameComparison = a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
-        if (nameComparison !== 0) return nameComparison;
-
-        const timeA = a.createdAt?.toMillis?.() || 0;
-        const timeB = b.createdAt?.toMillis?.() || 0;
-        if (timeA !== timeB) return timeA - timeB;
-
-        return a.id.localeCompare(b.id);
+    // 2. Start live Supabase listener
+    try {
+      const unsubSupabase = supabaseService.subscribeToInventory((supaItems) => {
+        if (supaItems && supaItems.length > 0) {
+          writeLocalCache(inventoryCacheKey, supaItems);
+          setDatabaseProvider('supabase');
+          callback(supaItems);
+        } else if (cached.length > 0) {
+          // If Supabase is empty but cache has items, show cache
+          callback(cached);
+        }
       });
 
-      writeLocalCache(inventoryCacheKey, items);
-      callback(items);
-    }, (error) => {
-      if (isQuotaExceededError(error)) {
-        console.warn('Inventory listener quota exceeded, switching seamlessly to Supabase:');
-        supabaseService.fetchInventory().then(supaItems => {
-          if (supaItems && supaItems.length > 0) {
-            writeLocalCache(inventoryCacheKey, supaItems);
-            callback(supaItems);
-          } else {
-            const cached = readLocalCache<InventoryItem>(inventoryCacheKey);
-            if (cached.length > 0) callback(cached);
-          }
-        }).catch(() => {
-          const cached = readLocalCache<InventoryItem>(inventoryCacheKey);
-          if (cached.length > 0) callback(cached);
+      return unsubSupabase;
+    } catch (err) {
+      console.warn('Supabase subscription failed, falling back to local cache & Firestore:', err);
+      // Secondary fallback to Firestore
+      setDatabaseProvider('firestore');
+      const q = query(collection(db, COLLECTION_PATH));
+      return onSnapshot(q, (snapshot) => {
+        const items = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        })) as InventoryItem[];
+        items.sort((a, b) => {
+          const orderA = a.orderIndex !== undefined ? a.orderIndex : 0;
+          const orderB = b.orderIndex !== undefined ? b.orderIndex : 0;
+          if (orderA !== orderB) return orderA - orderB;
+          return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
         });
-
-        const current = listenerRegistry.get(key);
-        if (current) {
-          current();
-          listenerRegistry.delete(key);
-        }
-        return;
-      }
-      console.warn('Inventory listener error, using local cache:', error);
-      const cached = readLocalCache<InventoryItem>(inventoryCacheKey);
-      if (cached.length > 0) {
-        callback(cached);
-      }
-    }), () => readLocalCache<InventoryItem>(inventoryCacheKey));
+        writeLocalCache(inventoryCacheKey, items);
+        callback(items);
+      }, (fsErr) => {
+        console.warn('Firestore fallback error:', fsErr);
+        const cachedFallback = readLocalCache<InventoryItem>(inventoryCacheKey);
+        if (cachedFallback.length > 0) callback(cachedFallback);
+      });
+    }
   },
 
   updateAllStockDatesTo27July2026: async () => {
@@ -373,6 +379,16 @@ export const inventoryService = {
 
     const salesCacheKey = getUserCacheKey(SALES_CACHE_KEY, auth.currentUser.uid);
     const cachedSales = readLocalCache<SaleRecord>(salesCacheKey);
+
+    try {
+      const supaSales = await supabaseService.fetchSales();
+      if (supaSales && supaSales.length > 0) {
+        writeLocalCache(salesCacheKey, supaSales);
+        return supaSales;
+      }
+    } catch (err) {
+      console.warn('Supabase fetchSales failed, falling back to Firestore:', err);
+    }
 
     try {
       const q = query(
@@ -531,7 +547,52 @@ export const inventoryService = {
           sale: salePayload,
         }
       });
+
+      // Mirror sale to Supabase
+      try {
+        await supabaseService.recordSale({
+          itemId: item.id,
+          itemName: item.name,
+          customerName: sale.customerName,
+          companyName: sale.companyName,
+          quantity: sale.quantity,
+          unitPrice: Number(sale.unitPrice) || 0,
+          totalAmount: sale.quantity * (Number(sale.unitPrice) || 0),
+          location: sale.location,
+          notes: sale.notes,
+        });
+        await supabaseService.updateStock(item.id, {
+          upper: updatedQuantities.upper,
+          down: updatedQuantities.down,
+          nagdevi: updatedQuantities.nagdevi,
+          total: totalQuantity,
+        });
+      } catch (supaErr) {
+        console.warn('Supabase sale mirror error:', supaErr);
+      }
     } catch (error) {
+      // If Firestore failed, write to Supabase directly!
+      try {
+        await supabaseService.recordSale({
+          itemId: item.id,
+          itemName: item.name,
+          customerName: sale.customerName,
+          companyName: sale.companyName,
+          quantity: sale.quantity,
+          unitPrice: Number(sale.unitPrice) || 0,
+          totalAmount: sale.quantity * (Number(sale.unitPrice) || 0),
+          location: sale.location,
+          notes: sale.notes,
+        });
+        await supabaseService.updateStock(item.id, {
+          upper: updatedQuantities.upper,
+          down: updatedQuantities.down,
+          nagdevi: updatedQuantities.nagdevi,
+          total: totalQuantity,
+        });
+      } catch (supaErr) {
+        console.warn('Supabase sale fallback failed:', supaErr);
+      }
       const cachedSales = readLocalCache<SaleRecord>(salesCacheKey);
       const localSale: SaleRecord = {
         id: `local-${Date.now()}`,
@@ -570,6 +631,16 @@ export const inventoryService = {
 
     const purchasesCacheKey = getUserCacheKey(PURCHASES_CACHE_KEY, auth.currentUser.uid);
     const cachedPurchases = readLocalCache<PurchaseRecord>(purchasesCacheKey);
+
+    try {
+      const supaPurchases = await supabaseService.fetchPurchases();
+      if (supaPurchases && supaPurchases.length > 0) {
+        writeLocalCache(purchasesCacheKey, supaPurchases);
+        return supaPurchases;
+      }
+    } catch (err) {
+      console.warn('Supabase fetchPurchases failed, falling back to Firestore:', err);
+    }
 
     try {
       const q = query(
@@ -727,7 +798,64 @@ export const inventoryService = {
           purchase: purchaseRecord,
         }
       });
+
+      // Mirror purchase to Supabase
+      try {
+        await supabaseService.recordPurchase({
+          itemId: item.id,
+          itemName: item.name,
+          supplierName: purchase.supplierName,
+          boxPacking: targetBoxPacking,
+          quantity,
+          unitPrice: Number(purchase.unitPrice) || 0,
+          totalAmount: quantity * (Number(purchase.unitPrice) || 0),
+          location: purchase.location,
+          notes: purchase.notes,
+        });
+        await supabaseService.updateStock(item.id, {
+          upper: updatedQuantities.upper,
+          down: updatedQuantities.down,
+          nagdevi: updatedQuantities.nagdevi,
+          total: totalQuantity,
+        });
+        if (newPrice > 0 || targetBoxPacking) {
+          await supabaseService.updateItemDetails(item.id, {
+            ...(newPrice > 0 ? { price: newPrice } : {}),
+            ...(targetBoxPacking ? { boxPacking: targetBoxPacking } : {}),
+          });
+        }
+      } catch (supaErr) {
+        console.warn('Supabase purchase mirror error:', supaErr);
+      }
     } catch (error) {
+      // If Firestore failed, write to Supabase directly!
+      try {
+        await supabaseService.recordPurchase({
+          itemId: item.id,
+          itemName: item.name,
+          supplierName: purchase.supplierName,
+          boxPacking: targetBoxPacking,
+          quantity,
+          unitPrice: Number(purchase.unitPrice) || 0,
+          totalAmount: quantity * (Number(purchase.unitPrice) || 0),
+          location: purchase.location,
+          notes: purchase.notes,
+        });
+        await supabaseService.updateStock(item.id, {
+          upper: updatedQuantities.upper,
+          down: updatedQuantities.down,
+          nagdevi: updatedQuantities.nagdevi,
+          total: totalQuantity,
+        });
+        if (newPrice > 0 || targetBoxPacking) {
+          await supabaseService.updateItemDetails(item.id, {
+            ...(newPrice > 0 ? { price: newPrice } : {}),
+            ...(targetBoxPacking ? { boxPacking: targetBoxPacking } : {}),
+          });
+        }
+      } catch (supaErr) {
+        console.warn('Supabase purchase fallback failed:', supaErr);
+      }
       const cachedPurchases = readLocalCache<PurchaseRecord>(purchasesCacheKey);
       const localPurchase: PurchaseRecord = {
         id: `local-${Date.now()}`,
@@ -1098,6 +1226,16 @@ export const inventoryService = {
     const cachedLogs = readLocalCache<AuditLog>(auditCacheKey);
 
     try {
+      const supaLogs = await supabaseService.fetchAuditLogs(limitCount);
+      if (supaLogs && supaLogs.length > 0) {
+        writeLocalCache(auditCacheKey, supaLogs);
+        return supaLogs;
+      }
+    } catch (err) {
+      console.warn('Supabase fetchAuditLogs failed, falling back to Firestore:', err);
+    }
+
+    try {
       let q = query(
         collection(db, AUDIT_COLLECTION),
         orderBy('timestamp', 'desc'),
@@ -1262,7 +1400,32 @@ export const inventoryService = {
       writeLocalCache(inventoryCacheKey, [newItem, ...cachedItems]);
 
       logActivity('CREATE', item.name, docRef.id, { after: item });
+
+      // Mirror to Supabase
+      try {
+        await supabaseService.addItem({
+          ...item,
+          id: docRef.id,
+          orderIndex: calculatedOrderIndex,
+        });
+      } catch (supaErr) {
+        console.warn('Supabase addItem mirror error:', supaErr);
+      }
     } catch (error) {
+      // If Firestore failed, write to Supabase directly!
+      try {
+        const supaItem = await supabaseService.addItem({
+          ...item,
+          orderIndex: item.orderIndex ?? Date.now(),
+        });
+        const inventoryCacheKey = getUserCacheKey(INVENTORY_CACHE_KEY, auth.currentUser?.uid || 'default');
+        const cachedItems = readLocalCache<InventoryItem>(inventoryCacheKey);
+        writeLocalCache(inventoryCacheKey, [supaItem, ...cachedItems]);
+        return;
+      } catch (supaErr) {
+        console.warn('Supabase addItem fallback failed:', supaErr);
+      }
+
       const inventoryCacheKey = getUserCacheKey(INVENTORY_CACHE_KEY, auth.currentUser.uid);
       const cachedItems = readLocalCache<InventoryItem>(inventoryCacheKey);
       const fallbackItem: InventoryItem = {
