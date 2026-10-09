@@ -16,6 +16,7 @@ import {
   Timestamp
 } from 'firebase/firestore';
 import { db, auth, firebaseConfig } from '../lib/firebase';
+import { supabaseService } from './supabaseService';
 import { InventoryItem, NewInventoryItem, AuditLog, AuditAction, SaleRecord, PurchaseRecord, SaleLocation, ReconciliationReport } from '../types';
 
 enum OperationType {
@@ -192,11 +193,20 @@ export const inventoryService = {
       callback(items);
     }, (error) => {
       if (isQuotaExceededError(error)) {
-        console.warn('Inventory listener quota exceeded, using local cache only:', error);
-        const cached = readLocalCache<InventoryItem>(inventoryCacheKey);
-        if (cached.length > 0) {
-          callback(cached);
-        }
+        console.warn('Inventory listener quota exceeded, switching seamlessly to Supabase:');
+        supabaseService.fetchInventory().then(supaItems => {
+          if (supaItems && supaItems.length > 0) {
+            writeLocalCache(inventoryCacheKey, supaItems);
+            callback(supaItems);
+          } else {
+            const cached = readLocalCache<InventoryItem>(inventoryCacheKey);
+            if (cached.length > 0) callback(cached);
+          }
+        }).catch(() => {
+          const cached = readLocalCache<InventoryItem>(inventoryCacheKey);
+          if (cached.length > 0) callback(cached);
+        });
+
         const current = listenerRegistry.get(key);
         if (current) {
           current();
@@ -1463,7 +1473,23 @@ export const inventoryService = {
       try {
         localStorage.removeItem(getUserCacheKey(INVENTORY_CACHE_KEY, auth.currentUser.uid));
       } catch (_) {}
+
+      // Mirror deletion to Supabase
+      try {
+        await supabaseService.deleteAllItems();
+      } catch (err) {
+        console.warn('Supabase batch delete error (ignoring):', err);
+      }
     } catch (error) {
+      // If Firestore failed due to quota, still delete from Supabase and clear local cache
+      try {
+        await supabaseService.deleteAllItems();
+        localStorage.removeItem(getUserCacheKey(INVENTORY_CACHE_KEY, auth.currentUser.uid));
+        if (onProgress) onProgress(1, 1);
+        return;
+      } catch (supaErr) {
+        console.warn('Supabase delete fallback failed:', supaErr);
+      }
       handleFirestoreError(error, OperationType.DELETE, COLLECTION_PATH);
     }
   },
@@ -1534,7 +1560,21 @@ export const inventoryService = {
       }
       
       await logActivity('BATCH_IMPORT', 'IMPORT SESSION', undefined, { after: `${items.length} items imported` });
+
+      // Mirror imported items to Supabase for unlimited high-speed reads
+      try {
+        await supabaseService.upsertItemsBatch(items);
+      } catch (supaErr) {
+        console.warn('Supabase batch import sync warning (ignoring):', supaErr);
+      }
     } catch (error) {
+      // If Firestore failed due to quota, still import to Supabase!
+      try {
+        await supabaseService.upsertItemsBatch(items, onProgress);
+        return;
+      } catch (supaErr) {
+        console.warn('Supabase fallback import failed:', supaErr);
+      }
       handleFirestoreError(error, OperationType.WRITE, COLLECTION_PATH);
     }
   }
