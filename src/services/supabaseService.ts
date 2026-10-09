@@ -66,7 +66,29 @@ export const supabaseService = {
       }
     }
 
-    return allRows.map(supabaseService.mapRowToItem);
+    const mapped = allRows.map(supabaseService.mapRowToItem);
+
+    // Exact same deterministic sort as Firestore:
+    // 1. orderIndex (maintains exact spreadsheet sequence)
+    // 2. name (alphanumeric tiebreaker)
+    // 3. createdAt
+    // 4. id
+    mapped.sort((a, b) => {
+      const orderA = a.orderIndex !== undefined ? a.orderIndex : 0;
+      const orderB = b.orderIndex !== undefined ? b.orderIndex : 0;
+      if (orderA !== orderB) return orderA - orderB;
+
+      const nameComparison = a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+      if (nameComparison !== 0) return nameComparison;
+
+      const timeA = a.createdAt?.seconds || 0;
+      const timeB = b.createdAt?.seconds || 0;
+      if (timeA !== timeB) return timeA - timeB;
+
+      return a.id.localeCompare(b.id);
+    });
+
+    return mapped;
   },
 
   // Realtime subscription for inventory
@@ -287,3 +309,4 @@ export const supabaseService = {
     });
   },
 };
+
