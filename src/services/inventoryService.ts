@@ -86,6 +86,27 @@ const writeLocalCache = <T>(key: string, value: T[]) => {
 let quotaExceededState = false;
 const quotaListeners = new Set<(isExceeded: boolean) => void>();
 
+export type DatabaseProvider = 'firestore' | 'supabase';
+let currentDbProvider: DatabaseProvider = 'firestore';
+const providerListeners = new Set<(provider: DatabaseProvider) => void>();
+
+export const getActiveDatabaseProvider = () => currentDbProvider;
+
+export const subscribeToDatabaseProvider = (cb: (provider: DatabaseProvider) => void) => {
+  providerListeners.add(cb);
+  cb(currentDbProvider);
+  return () => providerListeners.delete(cb);
+};
+
+export const setDatabaseProvider = (provider: DatabaseProvider) => {
+  if (currentDbProvider !== provider) {
+    currentDbProvider = provider;
+    providerListeners.forEach(cb => {
+      try { cb(provider); } catch (_) {}
+    });
+  }
+};
+
 export const getIsQuotaExceeded = () => quotaExceededState;
 
 export const subscribeToQuotaExceeded = (cb: (isExceeded: boolean) => void) => {
@@ -110,6 +131,7 @@ const isQuotaExceededError = (error: unknown): boolean => {
   const isExceeded = maybeCode === 'resource-exhausted' || maybeCode === 'quota-exceeded' || maybeMessage.toLowerCase().includes('quota exceeded');
   if (isExceeded) {
     setQuotaExceeded(true);
+    setDatabaseProvider('supabase');
   }
   return isExceeded;
 };
@@ -1302,7 +1324,21 @@ export const inventoryService = {
         before: { name: item.name, price: item.price, boxPacking: item.boxPacking || '', category: item.category || '' },
         after: updates
       });
+
+      // Mirror update to Supabase
+      try {
+        await supabaseService.updateItemDetails(item.id, updates);
+      } catch (supaErr) {
+        console.warn('Supabase update mirror error:', supaErr);
+      }
     } catch (error) {
+      // If Firestore failed, update Supabase directly!
+      try {
+        await supabaseService.updateItemDetails(item.id, updates);
+      } catch (supaErr) {
+        console.warn('Supabase update fallback failed:', supaErr);
+      }
+
       const cachedItems = readLocalCache<InventoryItem>(inventoryCacheKey);
       const itemIndex = cachedItems.findIndex(existing => existing.id === item.id);
       if (itemIndex >= 0) {
@@ -1317,7 +1353,7 @@ export const inventoryService = {
         };
         writeLocalCache(inventoryCacheKey, cachedItems);
       }
-      console.warn('Firestore item update failed, saved to local cache instead:', error);
+      console.warn('Firestore item update failed, saved to local cache & Supabase:', error);
     }
   },
 
@@ -1354,7 +1390,31 @@ export const inventoryService = {
         },
         after: quantities
       });
+
+      // Mirror stock adjustment to Supabase
+      try {
+        await supabaseService.updateStock(item.id, {
+          upper: quantities.upper ?? item.upperOfficeQty ?? 0,
+          down: quantities.down ?? item.downOfficeQty ?? 0,
+          nagdevi: quantities.nagdevi ?? item.nagdeviOfficeQty ?? 0,
+          total: quantities.total,
+        });
+      } catch (supaErr) {
+        console.warn('Supabase stock update mirror error:', supaErr);
+      }
     } catch (error) {
+      // If Firestore failed, update Supabase directly!
+      try {
+        await supabaseService.updateStock(item.id, {
+          upper: quantities.upper ?? item.upperOfficeQty ?? 0,
+          down: quantities.down ?? item.downOfficeQty ?? 0,
+          nagdevi: quantities.nagdevi ?? item.nagdeviOfficeQty ?? 0,
+          total: quantities.total,
+        });
+      } catch (supaErr) {
+        console.warn('Supabase stock update fallback failed:', supaErr);
+      }
+
       const cachedItems = readLocalCache<InventoryItem>(inventoryCacheKey);
       const itemIndex = cachedItems.findIndex(existing => existing.id === item.id);
       const nextItem: InventoryItem = {
@@ -1370,7 +1430,7 @@ export const inventoryService = {
         cachedItems.unshift(nextItem);
       }
       writeLocalCache(inventoryCacheKey, cachedItems);
-      console.warn('Firestore stock update failed, saved to local cache instead:', error);
+      console.warn('Firestore stock update failed, saved to local cache & Supabase:', error);
     }
   },
 
@@ -1397,14 +1457,26 @@ export const inventoryService = {
         before: { boxPacking: item.boxPacking || '' },
         after: { boxPacking }
       });
+
+      try {
+        await supabaseService.updateItemDetails(item.id, { boxPacking });
+      } catch (supaErr) {
+        console.warn('Supabase box packing mirror error:', supaErr);
+      }
     } catch (error) {
+      try {
+        await supabaseService.updateItemDetails(item.id, { boxPacking });
+      } catch (supaErr) {
+        console.warn('Supabase box packing fallback failed:', supaErr);
+      }
+
       const cachedItems = readLocalCache<InventoryItem>(inventoryCacheKey);
       const itemIndex = cachedItems.findIndex(existing => existing.id === item.id);
       if (itemIndex >= 0) {
         cachedItems[itemIndex] = { ...cachedItems[itemIndex], boxPacking, updatedAt: { seconds: Math.floor(Date.now() / 1000), nanoseconds: 0 } };
         writeLocalCache(inventoryCacheKey, cachedItems);
       }
-      console.warn('Firestore box packing update failed, saved to local cache instead:', error);
+      console.warn('Firestore box packing update failed, saved to local cache & Supabase:', error);
     }
   },
 
@@ -1421,10 +1493,22 @@ export const inventoryService = {
       writeLocalCache(inventoryCacheKey, cachedItems.filter(existing => existing.id !== item.id));
 
       logActivity('DELETE', item.name, item.id, { before: item });
+
+      try {
+        await supabaseService.deleteItem(item.id);
+      } catch (supaErr) {
+        console.warn('Supabase delete mirror error:', supaErr);
+      }
     } catch (error) {
+      try {
+        await supabaseService.deleteItem(item.id);
+      } catch (supaErr) {
+        console.warn('Supabase delete fallback failed:', supaErr);
+      }
+
       const cachedItems = readLocalCache<InventoryItem>(inventoryCacheKey);
       writeLocalCache(inventoryCacheKey, cachedItems.filter(existing => existing.id !== item.id));
-      console.warn('Firestore delete failed, removed from local cache instead:', error);
+      console.warn('Firestore delete failed, removed from local cache & Supabase:', error);
     }
   },
 

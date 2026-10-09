@@ -2,7 +2,7 @@ import React, { useCallback, useMemo, useState, useEffect, useRef } from 'react'
 import { Search, Plus, Minus, Trash2, TrendingDown, TrendingUp, PackageSearch, Pencil, Loader2, Calendar, FileSpreadsheet, Database, Download, Filter } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { InventoryItem, SaleLocation } from '../types';
-import { inventoryService } from '../services/inventoryService';
+import { inventoryService, subscribeToDatabaseProvider, DatabaseProvider } from '../services/inventoryService';
 import { motion, AnimatePresence } from 'motion/react';
 import { DeleteModal } from './DeleteModal';
 import { EditItemModal } from './EditItemModal';
@@ -679,6 +679,12 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({ items, setItems,
     title: '',
     message: ''
   });
+
+  const [activeDb, setActiveDb] = React.useState<DatabaseProvider>('firestore');
+
+  React.useEffect(() => {
+    return subscribeToDatabaseProvider(setActiveDb);
+  }, []);
 
   const [updatedRowIds, setUpdatedRowIds] = React.useState<Record<string, number>>({});
 
@@ -1465,6 +1471,18 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({ items, setItems,
                 <button onClick={() => setSelectedCategory('all')} className="hover:text-indigo-900 ml-1">✕</button>
               </span>
             )}
+            {/* Live Database Source Indicator */}
+            <span 
+              className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider transition-all ${
+                activeDb === 'supabase'
+                  ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                  : 'bg-blue-100 text-blue-800 border border-blue-300'
+              }`}
+              title={activeDb === 'supabase' ? 'Reading live from Supabase (Unlimited)' : 'Reading live from Firestore'}
+            >
+              <span className={`w-1.5 h-1.5 rounded-full ${activeDb === 'supabase' ? 'bg-emerald-500 animate-pulse' : 'bg-blue-500'}`} />
+              Database: {activeDb === 'supabase' ? 'Supabase (Unlimited)' : 'Firestore'}
+            </span>
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
