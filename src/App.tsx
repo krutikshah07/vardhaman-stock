@@ -202,15 +202,6 @@ export default function App() {
     <div className="min-h-screen bg-slate-50 flex flex-col">
       <Navbar user={user} />
 
-      {quotaExceeded && (
-        <div className="bg-amber-500 text-white px-4 py-2 text-xs font-bold flex items-center justify-center gap-2 shadow-sm text-center">
-          <AlertTriangle size={16} className="shrink-0" />
-          <span>
-            Firebase Daily Read Quota (50,000 free reads) reached for today. Running safely in offline cache mode with your local data. To restore live database reads, upgrade to Blaze (Pay-as-you-go) in Firebase Console, or wait for daily quota reset at 12:30 PM IST.
-          </span>
-        </div>
-      )}
-
       <main className="flex-1 w-full max-w-[1700px] mx-auto p-4 md:p-8">
         <AnimatePresence mode="wait">
           {!user ? (
