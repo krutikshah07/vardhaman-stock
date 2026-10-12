@@ -296,7 +296,7 @@ const InventoryRow = React.memo(({
   handleEditClick: (item: InventoryItem) => void;
   handleDeleteClick: (item: InventoryItem) => void;
   handleInsertBelowClick: (item: InventoryItem) => void;
-  handleSellClick: (item: InventoryItem) => void;
+  handleSellClick: (item: InventoryItem, office?: SaleLocation) => void;
   handlePurchaseClick: (item: InventoryItem, office: SaleLocation) => void;
   isEditing?: boolean;
   isLastUpdated?: boolean;
@@ -352,7 +352,7 @@ const InventoryRow = React.memo(({
         </td>
         <td className="px-6 py-4 whitespace-nowrap">
           <div className="flex items-center gap-1 bg-slate-50 p-1 rounded-lg border border-slate-200 shadow-inner w-fit">
-            <button onClick={() => handleSellClick(item)} className="p-1 hover:bg-white rounded text-slate-500 hover:text-red-500 transition-colors active:scale-95" title="Record sale">
+            <button onClick={() => handleSellClick(item, 'upper')} className="p-1 hover:bg-white rounded text-slate-500 hover:text-red-500 transition-colors active:scale-95" title="Record sale from Upper">
               <Minus size={12} />
             </button>
             <InlineQtyInput 
@@ -369,7 +369,7 @@ const InventoryRow = React.memo(({
         </td>
         <td className="px-6 py-4 whitespace-nowrap min-w-[150px]">
           <div className="flex items-center gap-1 bg-slate-50 p-1 rounded-lg border border-slate-200 shadow-inner w-fit">
-            <button onClick={() => handleSellClick(item)} className="p-1 hover:bg-white rounded text-slate-500 hover:text-red-500 transition-colors active:scale-95" title="Record sale">
+            <button onClick={() => handleSellClick(item, 'down')} className="p-1 hover:bg-white rounded text-slate-500 hover:text-red-500 transition-colors active:scale-95" title="Record sale from Down">
               <Minus size={12} />
             </button>
             <InlineQtyInput 
@@ -386,7 +386,7 @@ const InventoryRow = React.memo(({
         </td>
         <td className="px-6 py-4 whitespace-nowrap min-w-[150px]">
           <div className="flex items-center gap-1 bg-slate-50 p-1 rounded-lg border border-slate-200 shadow-inner w-fit">
-            <button onClick={() => handleSellClick(item)} className="p-1 hover:bg-white rounded text-slate-500 hover:text-red-500 transition-colors active:scale-95" title="Record sale">
+            <button onClick={() => handleSellClick(item, 'nagdevi')} className="p-1 hover:bg-white rounded text-slate-500 hover:text-red-500 transition-colors active:scale-95" title="Record sale from Nagdevi">
               <Minus size={12} />
             </button>
             <InlineQtyInput 
@@ -407,7 +407,7 @@ const InventoryRow = React.memo(({
     {locationFilter === 'upper' && (
       <td className="px-6 py-4 bg-blue-50/20 whitespace-nowrap">
         <div className="flex items-center gap-3 font-bold text-slate-900">
-          <button onClick={() => handleSellClick(item)} className="p-2 hover:bg-white rounded-lg shadow-sm border border-slate-200 transition-all active:scale-90 bg-slate-50 flex items-center justify-center" title="Record sale">
+          <button onClick={() => handleSellClick(item, 'upper')} className="p-2 hover:bg-white rounded-lg shadow-sm border border-slate-200 transition-all active:scale-90 bg-slate-50 flex items-center justify-center" title="Record sale from Upper">
             <Minus size={16} />
           </button>
           <div className="min-w-[70px] text-center">
@@ -430,7 +430,7 @@ const InventoryRow = React.memo(({
     {locationFilter === 'down' && (
       <td className="px-6 py-4 bg-blue-50/20 whitespace-nowrap">
         <div className="flex items-center gap-3 font-bold text-slate-900">
-          <button onClick={() => handleSellClick(item)} className="p-2 hover:bg-white rounded-lg shadow-sm border border-slate-200 transition-all active:scale-90 bg-slate-50 flex items-center justify-center" title="Record sale">
+          <button onClick={() => handleSellClick(item, 'down')} className="p-2 hover:bg-white rounded-lg shadow-sm border border-slate-200 transition-all active:scale-90 bg-slate-50 flex items-center justify-center" title="Record sale from Down">
             <Minus size={16} />
           </button>
           <div className="min-w-[70px] text-center">
@@ -453,7 +453,7 @@ const InventoryRow = React.memo(({
     {locationFilter === 'nagdevi' && (
       <td className="px-6 py-4 bg-blue-50/20 whitespace-nowrap">
         <div className="flex items-center gap-3 font-bold text-slate-900">
-          <button onClick={() => handleSellClick(item)} className="p-2 hover:bg-white rounded-lg shadow-sm border border-slate-200 transition-all active:scale-90 bg-slate-50 flex items-center justify-center" title="Record sale">
+          <button onClick={() => handleSellClick(item, 'nagdevi')} className="p-2 hover:bg-white rounded-lg shadow-sm border border-slate-200 transition-all active:scale-90 bg-slate-50 flex items-center justify-center" title="Record sale from Nagdevi">
             <Minus size={16} />
           </button>
           <div className="min-w-[70px] text-center">
@@ -518,7 +518,7 @@ const MobileInventoryCard = React.memo(({
   handleEditClick: (item: InventoryItem) => void;
   handleDeleteClick: (item: InventoryItem) => void;
   handleInsertBelowClick: (item: InventoryItem) => void;
-  handleSellClick: (item: InventoryItem) => void;
+  handleSellClick: (item: InventoryItem, office?: SaleLocation) => void;
   handlePurchaseClick: (item: InventoryItem, office: SaleLocation) => void;
   isEditing?: boolean;
   isLastUpdated?: boolean;
@@ -559,7 +559,7 @@ const MobileInventoryCard = React.memo(({
           <Plus size={16} />
         </button>
         <button
-          onClick={() => handleSellClick(item)}
+          onClick={() => handleSellClick(item, locationFilter === 'all' ? 'upper' : locationFilter)}
           className="p-2 text-slate-400 hover:text-emerald-600 rounded-lg bg-slate-50"
           title="Record Sale"
         >
@@ -605,7 +605,7 @@ const MobileInventoryCard = React.memo(({
       </div>
       <div className="flex items-center gap-4">
         <button 
-          onClick={() => handleSellClick(item)}
+          onClick={() => handleSellClick(item, locationFilter === 'all' ? 'upper' : locationFilter)}
           className="w-10 h-10 flex items-center justify-center bg-white border border-slate-200 rounded-full shadow-sm text-slate-600 active:scale-90 transition-transform"
           title="Record sale"
         >
@@ -1032,11 +1032,11 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({ items, setItems,
     setInsertModal({ isOpen: true, itemBelow: item });
   }, []);
 
-  const handleSellClick = useCallback((item: InventoryItem) => {
+  const handleSellClick = useCallback((item: InventoryItem, office?: SaleLocation) => {
     setSellModal({
       isOpen: true,
       item,
-      preferredLocation: locationFilter === 'all' ? 'upper' : locationFilter,
+      preferredLocation: office || (locationFilter === 'all' ? 'upper' : locationFilter),
     });
   }, [locationFilter]);
 
