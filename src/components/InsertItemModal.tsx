@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Plus, X, Save } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { InventoryItem } from '../types';
+import { CategorySelect } from './CategorySelect';
 
 interface InsertItemModalProps {
   isOpen: boolean;
@@ -16,9 +17,10 @@ interface InsertItemModalProps {
     nagdevi: number;
   }) => void;
   itemBelow: InventoryItem | null;
+  categories?: string[];
 }
 
-export const InsertItemModal: React.FC<InsertItemModalProps> = ({ isOpen, onClose, onConfirm, itemBelow }) => {
+export const InsertItemModal: React.FC<InsertItemModalProps> = ({ isOpen, onClose, onConfirm, itemBelow, categories = [] }) => {
   const [name, setName] = useState('');
   const [price, setPrice] = useState('');
   const [boxPacking, setBoxPacking] = useState('');
@@ -91,16 +93,11 @@ export const InsertItemModal: React.FC<InsertItemModalProps> = ({ isOpen, onClos
                   </p>
                 )}
                 <div className="space-y-4">
-                  <div className="space-y-1">
-                    <label className="text-xs font-bold text-slate-500 uppercase px-1">Category / Model (e.g. MK-12, VILLIERS)</label>
-                    <input
-                      type="text"
-                      placeholder="E.G. MK-12, VILLIERS, PETROL"
-                      value={category}
-                      onChange={(e) => setCategory(e.target.value.toUpperCase())}
-                      className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all outline-none font-medium uppercase placeholder:text-slate-300"
-                    />
-                  </div>
+                  <CategorySelect
+                    categories={categories}
+                    value={category}
+                    onChange={(cat) => setCategory(cat)}
+                  />
                   <div className="space-y-1">
                     <label className="text-xs font-bold text-slate-500 uppercase px-1">Item Name</label>
                     <input

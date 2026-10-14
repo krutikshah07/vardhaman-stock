@@ -1416,7 +1416,7 @@ export const inventoryService = {
       try {
         const supaItem = await supabaseService.addItem({
           ...item,
-          orderIndex: item.orderIndex ?? Date.now(),
+          orderIndex: calculatedOrderIndex ?? item.orderIndex ?? Date.now(),
         });
         const inventoryCacheKey = getUserCacheKey(INVENTORY_CACHE_KEY, auth.currentUser?.uid || 'default');
         const cachedItems = readLocalCache<InventoryItem>(inventoryCacheKey);

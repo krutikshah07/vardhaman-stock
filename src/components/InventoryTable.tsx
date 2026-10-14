@@ -473,8 +473,15 @@ const InventoryRow = React.memo(({
       </td>
     )}
 
-    <td className="px-6 py-4 whitespace-nowrap text-right w-28 sticky right-0 z-20 border-l border-slate-200 bg-white/95 shadow-[2px_0_5px_rgba(0,0,0,0.02)]">
-      <div className="flex items-center justify-end gap-2">
+    <td className="px-6 py-4 whitespace-nowrap text-right w-[160px] sticky right-0 z-20 border-l border-slate-200 bg-white/95 shadow-[2px_0_5px_rgba(0,0,0,0.02)]">
+      <div className="flex items-center justify-end gap-1.5">
+        <button
+          onClick={() => handleInsertBelowClick(item)}
+          className="p-2 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-all active:scale-90"
+          title="Insert New Item Below"
+        >
+          <Plus size={18} />
+        </button>
         <button
           onClick={() => handleEditClick(item)}
           className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all active:scale-90"
@@ -1233,7 +1240,9 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({ items, setItems,
         // Find next item in the full items list that is currently loaded
         const nextItem = items[currentIndex + 1];
         if (nextItem) {
-          calculatedOrderIndex = ((currentItem.orderIndex ?? Date.now()) + (nextItem.orderIndex ?? Date.now())) / 2;
+          const currentOrder = currentItem.orderIndex ?? Date.now();
+          const nextOrder = nextItem.orderIndex ?? (currentOrder + 1000);
+          calculatedOrderIndex = currentOrder === nextOrder ? currentOrder + 0.5 : (currentOrder + nextOrder) / 2;
         } else {
           calculatedOrderIndex = (currentItem.orderIndex ?? Date.now()) + 1000;
         }
@@ -1627,6 +1636,7 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({ items, setItems,
       <EditItemModal
         isOpen={editModal.isOpen}
         item={editModal.item}
+        categories={categories}
         onClose={() => setEditModal({ isOpen: false, item: null })}
         onConfirm={handleConfirmEdit}
       />
@@ -1634,6 +1644,7 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({ items, setItems,
       <InsertItemModal
         isOpen={insertModal.isOpen}
         itemBelow={insertModal.itemBelow}
+        categories={categories}
         onClose={() => setInsertModal({ isOpen: false, itemBelow: null })}
         onConfirm={handleConfirmInsertBelow}
       />

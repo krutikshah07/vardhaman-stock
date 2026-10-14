@@ -63,7 +63,16 @@ export default function App() {
     };
   }, [user]);
 
-  const handleAddSingleItem = async (formItem: { name: string; price: string; boxPacking: string; category?: string; upper: string; down: string; nagdevi: string }) => {
+  const handleAddSingleItem = async (formItem: { 
+    name: string; 
+    price: string; 
+    boxPacking: string; 
+    category?: string; 
+    upper: string; 
+    down: string; 
+    nagdevi: string;
+    insertAfterId?: string;
+  }) => {
     const upper = Number(formItem.upper) || 0;
     const down = Number(formItem.down) || 0;
     const nagdevi = Number(formItem.nagdevi) || 0;
@@ -72,27 +81,23 @@ export default function App() {
     const boxPackingUpper = formItem.boxPacking.toUpperCase().trim();
     const categoryUpper = formItem.category ? formItem.category.toUpperCase().trim() : undefined;
 
-    // 1. Generate optimistic item with a temporary ID
-    const tempId = `temp-${Date.now()}`;
-    const optimisticItem: InventoryItem = {
-      id: tempId,
-      name: nameUpper,
-      price: priceValue,
-      quantity: upper + down + nagdevi,
-      upperOfficeQty: upper,
-      downOfficeQty: down,
-      nagdeviOfficeQty: nagdevi,
-      ownerId: user?.uid || '',
-      createdAt: { seconds: Math.floor(Date.now() / 1000), nanoseconds: 0 } as any,
-      updatedAt: { seconds: Math.floor(Date.now() / 1000), nanoseconds: 0 } as any,
-      orderIndex: Date.now(),
-      boxPacking: boxPackingUpper,
-      category: categoryUpper,
-    };
-
-    // Calculate actual order index using the same alphabetical insertion logic
+    // Calculate actual order index: either right after specified item or via alphabetical order
     let calculatedOrderIndex = Date.now();
-    if (items.length > 0) {
+
+    if (formItem.insertAfterId) {
+      const currentIndex = items.findIndex(i => i.id === formItem.insertAfterId);
+      if (currentIndex !== -1) {
+        const currentItem = items[currentIndex];
+        const nextItem = items[currentIndex + 1];
+        if (nextItem) {
+          const currentOrder = currentItem.orderIndex ?? Date.now();
+          const nextOrder = nextItem.orderIndex ?? (currentOrder + 1000);
+          calculatedOrderIndex = currentOrder === nextOrder ? currentOrder + 0.5 : (currentOrder + nextOrder) / 2;
+        } else {
+          calculatedOrderIndex = (currentItem.orderIndex ?? Date.now()) + 1000;
+        }
+      }
+    } else if (items.length > 0) {
       const sortedByName = [...items].sort((a, b) => 
         a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
       );
@@ -113,7 +118,24 @@ export default function App() {
         calculatedOrderIndex = ((prevItem.orderIndex ?? Date.now()) + (nextItem.orderIndex ?? Date.now())) / 2;
       }
     }
-    optimisticItem.orderIndex = calculatedOrderIndex;
+
+    // 1. Generate optimistic item with a temporary ID
+    const tempId = `temp-${Date.now()}`;
+    const optimisticItem: InventoryItem = {
+      id: tempId,
+      name: nameUpper,
+      price: priceValue,
+      quantity: upper + down + nagdevi,
+      upperOfficeQty: upper,
+      downOfficeQty: down,
+      nagdeviOfficeQty: nagdevi,
+      ownerId: user?.uid || '',
+      createdAt: { seconds: Math.floor(Date.now() / 1000), nanoseconds: 0 } as any,
+      updatedAt: { seconds: Math.floor(Date.now() / 1000), nanoseconds: 0 } as any,
+      orderIndex: calculatedOrderIndex,
+      boxPacking: boxPackingUpper,
+      category: categoryUpper,
+    };
 
     // 2. Synchronously update items state so it shows up in the table instantly!
     setItems((prev) => {
@@ -135,7 +157,7 @@ export default function App() {
       message: `${nameUpper} has been added successfully.`
     });
 
-    // 4. Asynchronously send the request to FireStore in the background
+    // 4. Asynchronously send the request to FireStore and Supabase in the background
     try {
       await inventoryService.addItem({
         name: nameUpper,
@@ -146,6 +168,7 @@ export default function App() {
         nagdeviOfficeQty: nagdevi,
         boxPacking: boxPackingUpper || undefined,
         category: categoryUpper,
+        orderIndex: calculatedOrderIndex,
       }, items);
     } catch (error) {
       // Revert from UI on rare background failures
@@ -307,6 +330,7 @@ export default function App() {
               <div className={view === 'inventory' ? 'block space-y-8' : 'hidden'}>
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
                   <ManualEntryForm 
+                    items={items}
                     onAdd={handleAddSingleItem} 
                     isProcessing={isProcessing} 
                   />
